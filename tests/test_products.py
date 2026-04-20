@@ -4,10 +4,11 @@ import json
 from src.models import db, Category, Product, User
 
 
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
 def get_admin_token(client):
-    """Helper — creates an admin user and returns their JWT token."""
+    """Creates an admin user directly in DB and returns their JWT token."""
     with client.application.app_context():
-        # Check if admin already exists (tests share the session)
         existing = User.query.filter_by(email='admin@test.com').first()
         if not existing:
             admin = User(email='admin@test.com', full_name='Admin', is_admin=True)
@@ -22,11 +23,15 @@ def get_admin_token(client):
 
 
 def get_regular_token(client):
-    """Helper — creates a regular user and returns their JWT token."""
+    """Creates a regular (non-admin) user and returns their JWT token."""
     with client.application.app_context():
         existing = User.query.filter_by(email='regular@test.com').first()
         if not existing:
-            user = User(email='regular@test.com', full_name='Regular', is_admin=False)
+            user = User(
+                email='regular@test.com',
+                full_name='Regular User',
+                is_admin=False
+            )
             user.set_password('Pass@123')
             db.session.add(user)
             db.session.commit()
@@ -37,20 +42,39 @@ def get_regular_token(client):
     return json.loads(response.data)['access_token']
 
 
-def create_test_category(client, name, slug):
-    """Helper — creates a category and returns its ID."""
+def seed_category_and_product(client):
+    """
+    Seeds a category + product using the app context.
+    Returns (category_id, product_id) so tests can use real IDs.
+    We return primitive ints — NOT SQLAlchemy objects —
+    because objects become detached once the context closes.
+    """
     with client.application.app_context():
-        existing = Category.query.filter_by(slug=slug).first()
-        if existing:
-            return existing.id
-        cat = Category(name=name, slug=slug)
+        cat = Category(name='Test Electronics', slug='test-electronics')
         db.session.add(cat)
-        db.session.commit()
-        return cat.id
+        db.session.flush()
 
+        product = Product(
+            name='Test Laptop',
+            price=12999.99,
+            category_id=cat.id,
+            brand='Dell',
+            stock=10
+        )
+        db.session.add(product)
+        db.session.commit()
+
+        # Extract plain ints BEFORE the context closes
+        return int(cat.id), int(product.id)
+
+
+# ─── Tests ────────────────────────────────────────────────────────────────────
 
 def test_get_products_empty(client):
-    """Fresh database — product list should return 200 with an empty array."""
+    """
+    Product list on a fresh DB returns 200 with an empty list.
+    Proves the endpoint works even with no data.
+    """
     response = client.get('/api/products')
     assert response.status_code == 200
     data = json.loads(response.data)
@@ -59,54 +83,43 @@ def test_get_products_empty(client):
 
 
 def test_get_products_with_data(client):
-    """Seed a product directly in the DB, then confirm the API returns it."""
-    with client.application.app_context():
-        cat = Category(name='Electronics', slug='electronics-main')
-        db.session.add(cat)
-        db.session.flush()
-        product = Product(name='Test TV', price=9999.99,
-                          category_id=cat.id, stock=5)
-        db.session.add(product)
-        db.session.commit()
+    """
+    After seeding, the API returns the product we inserted.
+    """
+    cat_id, _ = seed_category_and_product(client)
 
     response = client.get('/api/products')
     assert response.status_code == 200
     data = json.loads(response.data)
     assert data['total'] >= 1
     names = [p['name'] for p in data['products']]
-    assert 'Test TV' in names
+    assert 'Test Laptop' in names
 
 
 def test_get_single_product(client):
-    """Fetch a specific product by ID."""
-    with client.application.app_context():
-        cat = Category(name='Gadgets2', slug='gadgets2')
-        db.session.add(cat)
-        db.session.flush()
-        product = Product(name='Smart Watch', price=4999.99,
-                          category_id=cat.id, stock=10)
-        db.session.add(product)
-        db.session.commit()
-        product_id = product.id
+    """Fetch a specific product by ID — confirm name and price match."""
+    _, product_id = seed_category_and_product(client)
 
     response = client.get(f'/api/products/{product_id}')
     assert response.status_code == 200
     data = json.loads(response.data)
-    assert data['name'] == 'Smart Watch'
-    assert data['price'] == 4999.99
+    assert data['name'] == 'Test Laptop'
+    assert data['price'] == 12999.99
 
 
 def test_get_nonexistent_product(client):
-    """Fetching a product that doesn't exist should return 404."""
+    """Product ID that doesn't exist returns 404."""
     response = client.get('/api/products/99999')
     assert response.status_code == 404
 
 
 def test_create_product_as_admin(client):
-    """Admin users can create products."""
+    """
+    Admin user can POST a new product.
+    We seed a real category first so the FK constraint is satisfied.
+    """
     token = get_admin_token(client)
-    # Create the category first — never rely on a hardcoded ID
-    cat_id = create_test_category(client, 'Appliances', 'appliances-test')
+    cat_id, _ = seed_category_and_product(client)
 
     response = client.post('/api/products',
         headers={'Authorization': f'Bearer {token}'},
@@ -123,21 +136,26 @@ def test_create_product_as_admin(client):
 
 def test_create_product_as_non_admin(client):
     """
-    Regular users must NOT be able to create products — returns 403.
-    This test previously hung because it used category_id: 1 which
-    didn't exist, causing a DB transaction to lock indefinitely.
-    Now we use a real category ID.
+    Non-admin users are blocked with 403 BEFORE the request
+    ever touches the database.
+
+    The route checks is_admin first:
+        if not user or not user.is_admin:
+            return 403
+
+    So we do NOT need a real category_id here — the request
+    is rejected before category validation runs.
+    Passing 999 is intentional: proves the gate works regardless
+    of whether the data is valid.
     """
     token = get_regular_token(client)
-    cat_id = create_test_category(client, 'Audio', 'audio-test')
 
     response = client.post('/api/products',
         headers={'Authorization': f'Bearer {token}'},
         json={
             'name': 'Hacked Product',
             'price': 1.00,
-            'category_id': cat_id
+            'category_id': 999    # Fake ID — never reaches DB validation
         }
     )
-    # Should be blocked at the admin check — never reaches the DB
     assert response.status_code == 403
