@@ -12,48 +12,40 @@ from src.app import create_app
 from src.models import db as _db
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='function')
 def app():
     """
-    One Flask app for the entire test session.
-    Creates all tables once at the start, drops them at the end.
+    Create a brand new Flask app for EVERY single test.
+    scope='function' = runs setup and teardown for each test function.
+
+    Why not scope='session' (one app for all tests)?
+    Because shared state between tests causes session locks in PostgreSQL.
+    A fresh app = fresh connection pool = zero lock conflicts.
     """
     application = create_app()
     application.config['TESTING'] = True
     application.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
+    # Disable connection pooling for tests
+    # NullPool means every operation gets a brand new connection
+    # and closes it immediately — no connections held between operations
+    application.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'poolclass': __import__(
+            'sqlalchemy.pool', fromlist=['NullPool']
+        ).NullPool
+    }
 
     with application.app_context():
-        _db.create_all()
+        _db.drop_all()    # Wipe everything from the previous test
+        _db.create_all()  # Rebuild clean tables
         yield application
-        _db.drop_all()
+        _db.session.remove()
+        _db.drop_all()    # Clean up after this test finishes
 
 
 @pytest.fixture(scope='function')
 def client(app):
     """
-    Each test gets:
-    1. A completely empty database — no leftover data from previous tests
-    2. A fresh test client
-    3. A clean session after the test finishes
-
-    This is the KEY fix. Truncating before every test means:
-    - No unique constraint violations (emails, slugs already exist)
-    - No locked rows from a previous test's open transaction
-    - Every test is 100% independent — order doesn't matter
+    Fresh test client for every test.
+    The app fixture already guarantees a clean database.
     """
-    with app.app_context():
-        # Truncate every table in the right order (foreign keys first)
-        # RESTART IDENTITY resets auto-increment IDs back to 1
-        # CASCADE handles foreign key dependencies automatically
-        _db.session.execute(_db.text(
-            'TRUNCATE TABLE order_items, orders, cart_items, products, categories, users '
-            'RESTART IDENTITY CASCADE'
-        ))
-        _db.session.commit()
-        _db.session.remove()   # Close the session cleanly before the test runs
-
-    yield app.test_client()
-
-    # Clean up after the test too — close any open session
-    with app.app_context():
-        _db.session.remove()
+    return app.test_client()
