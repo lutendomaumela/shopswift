@@ -9,8 +9,8 @@ def get_admin_token(client):
     Helper — creates an admin user and returns their JWT token.
     Reused across multiple tests that need admin access.
     """
-    from src.models import User
-    from src.app import create_app
+   
+   
 
     # Create admin directly in DB (bypassing the API which doesn't expose is_admin)
     with client.application.app_context():

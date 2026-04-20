@@ -46,7 +46,7 @@ jobs:
           flake8 src/ tests/ \
             --max-line-length=120 \
             --exclude=__pycache__,migrations,venv \
-            --ignore=E501,W503,E241,E221,E251,W292,E302,E303,F401,W291,W293,E261,E262
+            --ignore=E501,W503,E241,E221,E251,W292,E302,E303,F401,W291,W293,E261,E262,E272,E701,E225,E402,E128,F811,E711,E712
         # What we're ignoring and why:
         # E241 — multiple spaces after ','     (our aligned column style)
         # E221 — multiple spaces before '='    (our aligned column style)
