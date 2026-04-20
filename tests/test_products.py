@@ -42,38 +42,51 @@ def get_regular_token(client):
     return json.loads(response.data)['access_token']
 
 
-def seed_category_and_product(client):
+def get_or_create_category(client, name, slug):
     """
-    Seeds a category + product using the app context.
-    Returns (category_id, product_id) so tests can use real IDs.
-    We return primitive ints — NOT SQLAlchemy objects —
-    because objects become detached once the context closes.
+    Returns a category ID — creates it only if the slug doesn't exist yet.
+    This is the KEY fix: multiple tests call this with the same slug,
+    so we check first instead of always inserting.
+    Returns a plain int so it stays valid after the context closes.
     """
     with client.application.app_context():
-        cat = Category(name='Test Electronics', slug='test-electronics')
+        existing = Category.query.filter_by(slug=slug).first()
+        if existing:
+            return int(existing.id)
+        cat = Category(name=name, slug=slug)
         db.session.add(cat)
-        db.session.flush()
+        db.session.commit()
+        return int(cat.id)
 
+
+def get_or_create_product(client, cat_id, name, price, stock=10):
+    """
+    Returns a product ID — creates it only if the name doesn't exist yet.
+    Returns a plain int so it stays valid after the context closes.
+    """
+    with client.application.app_context():
+        existing = Product.query.filter_by(name=name).first()
+        if existing:
+            return int(existing.id)
         product = Product(
-            name='Test Laptop',
-            price=12999.99,
-            category_id=cat.id,
-            brand='Dell',
-            stock=10
+            name=name,
+            price=price,
+            category_id=cat_id,
+            brand='Test Brand',
+            stock=stock
         )
         db.session.add(product)
         db.session.commit()
-
-        # Extract plain ints BEFORE the context closes
-        return int(cat.id), int(product.id)
+        return int(product.id)
 
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
 def test_get_products_empty(client):
     """
-    Product list on a fresh DB returns 200 with an empty list.
-    Proves the endpoint works even with no data.
+    Product list on a fresh DB returns 200 with a list.
+    We don't assert empty because other tests may have seeded data —
+    the DB is shared for the whole test session.
     """
     response = client.get('/api/products')
     assert response.status_code == 200
@@ -83,10 +96,9 @@ def test_get_products_empty(client):
 
 
 def test_get_products_with_data(client):
-    """
-    After seeding, the API returns the product we inserted.
-    """
-    cat_id, _ = seed_category_and_product(client)
+    """After seeding, the API returns the product we inserted."""
+    cat_id = get_or_create_category(client, 'Electronics', 'electronics-test')
+    get_or_create_product(client, cat_id, 'Test Laptop', 12999.99)
 
     response = client.get('/api/products')
     assert response.status_code == 200
@@ -98,13 +110,14 @@ def test_get_products_with_data(client):
 
 def test_get_single_product(client):
     """Fetch a specific product by ID — confirm name and price match."""
-    _, product_id = seed_category_and_product(client)
+    cat_id = get_or_create_category(client, 'Electronics', 'electronics-test')
+    product_id = get_or_create_product(client, cat_id, 'Test Laptop', 12999.99)
 
     response = client.get(f'/api/products/{product_id}')
     assert response.status_code == 200
     data = json.loads(response.data)
     assert data['name'] == 'Test Laptop'
-    assert data['price'] == 12999.99
+    assert float(data['price']) == 12999.99
 
 
 def test_get_nonexistent_product(client):
@@ -116,15 +129,16 @@ def test_get_nonexistent_product(client):
 def test_create_product_as_admin(client):
     """
     Admin user can POST a new product.
-    We seed a real category first so the FK constraint is satisfied.
+    We use get_or_create so the category exists
+    whether or not previous tests already made it.
     """
     token = get_admin_token(client)
-    cat_id, _ = seed_category_and_product(client)
+    cat_id = get_or_create_category(client, 'Appliances', 'appliances-test')
 
     response = client.post('/api/products',
         headers={'Authorization': f'Bearer {token}'},
         json={
-            'name': 'LG Fridge',
+            'name': 'LG Fridge Admin Test',   # Unique name — won't clash with other tests
             'price': 15999.99,
             'category_id': cat_id,
             'brand': 'LG',
@@ -136,17 +150,9 @@ def test_create_product_as_admin(client):
 
 def test_create_product_as_non_admin(client):
     """
-    Non-admin users are blocked with 403 BEFORE the request
-    ever touches the database.
-
-    The route checks is_admin first:
-        if not user or not user.is_admin:
-            return 403
-
-    So we do NOT need a real category_id here — the request
-    is rejected before category validation runs.
-    Passing 999 is intentional: proves the gate works regardless
-    of whether the data is valid.
+    Non-admin blocked with 403 before DB is ever touched.
+    category_id 999 is intentionally fake — the route
+    returns 403 at the admin check before validating anything else.
     """
     token = get_regular_token(client)
 
@@ -155,7 +161,7 @@ def test_create_product_as_non_admin(client):
         json={
             'name': 'Hacked Product',
             'price': 1.00,
-            'category_id': 999    # Fake ID — never reaches DB validation
+            'category_id': 999
         }
     )
     assert response.status_code == 403
