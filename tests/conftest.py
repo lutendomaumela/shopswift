@@ -15,21 +15,30 @@ from src.models import db as _db
 
 @pytest.fixture(scope='function')
 def app():
-    application = create_app()   # TestingConfig loads automatically
-                                 # because FLASK_ENV=testing is set above
+    """
+    Creates a complete Flask app for each test.
+    TestingConfig is selected automatically via FLASK_ENV=testing.
+    TestingConfig includes NullPool — no connection pooling between tests.
+    Tables are wiped and rebuilt before every test for clean isolation.
+    """
+    application = create_app()
 
     with application.app_context():
+        # Remove any tables from previous test
         _db.drop_all()
+        # Build fresh tables for this test
         _db.create_all()
         yield application
+        # Close any open sessions
         _db.session.remove()
+        # Clean up after this test
         _db.drop_all()
 
 
 @pytest.fixture(scope='function')
 def client(app):
     """
-    Fresh test client for every test.
-    The app fixture already guarantees a clean database.
+    A test HTTP client that talks to the app without a real server.
+    Each test gets a fresh client backed by a fresh database.
     """
     return app.test_client()
