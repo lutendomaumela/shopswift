@@ -1,7 +1,7 @@
 from flask import Flask, jsonify
 from flask_jwt_extended import JWTManager
 from flask_migrate import Migrate
-from src.config import DevelopmentConfig, ProductionConfig
+from src.config import DevelopmentConfig, ProductionConfig, TestingConfig
 from src.models import db
 from src.auth import auth_bp
 from src.routes.products import products_bp
@@ -19,9 +19,15 @@ def create_app():
     """
     app = Flask(__name__)
 
-    # Load config based on environment
+    # Load the right config based on environment
     env = os.getenv('FLASK_ENV', 'development')
-    app.config.from_object(ProductionConfig if env == 'production' else DevelopmentConfig)
+
+    if env == 'production':
+        app.config.from_object(ProductionConfig)
+    elif env == 'testing':
+        app.config.from_object(TestingConfig)   
+    else:
+        app.config.from_object(DevelopmentConfig)
 
     # Initialize extensions (attach them to the app instance)
     db.init_app(app)

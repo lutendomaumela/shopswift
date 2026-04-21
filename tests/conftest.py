@@ -7,6 +7,7 @@ os.environ['DATABASE_URL']   = 'postgresql://postgres:password@localhost:5432/sh
 os.environ['JWT_SECRET_KEY'] = 'test-secret-key'
 os.environ['SECRET_KEY']     = 'test-flask-secret'
 os.environ['FLASK_ENV']      = 'testing'
+os.environ['FLASK_APP']      = 'src.app:create_app'
 
 from src.app import create_app
 from src.models import db as _db
@@ -14,32 +15,15 @@ from src.models import db as _db
 
 @pytest.fixture(scope='function')
 def app():
-    """
-    Create a brand new Flask app for EVERY single test.
-    scope='function' = runs setup and teardown for each test function.
-
-    Why not scope='session' (one app for all tests)?
-    Because shared state between tests causes session locks in PostgreSQL.
-    A fresh app = fresh connection pool = zero lock conflicts.
-    """
-    application = create_app()
-    application.config['TESTING'] = True
-    application.config['SQLALCHEMY_DATABASE_URI'] = os.environ['DATABASE_URL']
-    # Disable connection pooling for tests
-    # NullPool means every operation gets a brand new connection
-    # and closes it immediately — no connections held between operations
-    application.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-        'poolclass': __import__(
-            'sqlalchemy.pool', fromlist=['NullPool']
-        ).NullPool
-    }
+    application = create_app()   # TestingConfig loads automatically
+                                 # because FLASK_ENV=testing is set above
 
     with application.app_context():
-        _db.drop_all()    # Wipe everything from the previous test
-        _db.create_all()  # Rebuild clean tables
+        _db.drop_all()
+        _db.create_all()
         yield application
         _db.session.remove()
-        _db.drop_all()    # Clean up after this test finishes
+        _db.drop_all()
 
 
 @pytest.fixture(scope='function')
