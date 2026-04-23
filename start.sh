@@ -18,21 +18,20 @@ done
 
 echo "📦 Running database migrations..."
 
-# Fix: check for env.py specifically, not just the folder
-# The folder exists (created in Dockerfile) but may be empty
 if [ ! -f "migrations/env.py" ]; then
   echo "   Initialising migrations folder..."
   flask db init
 fi
 
-# Generate migration script from current models
 flask db migrate -m "auto" 2>/dev/null || echo "   No new migrations needed."
-
-# Apply migrations to the database
 flask db upgrade
 
+# ── Seeding ───────────────────────────────────────────────────────────────
+# REMOVED: 2>/dev/null — we want to SEE errors, not hide them
+# REMOVED: || echo "Already seeded" — the script handles this itself now
+# The seed script uses get_or_create so it is safe to run every startup
 echo "🌱 Seeding database..."
-python seed_products.py 2>/dev/null || echo "   Already seeded, skipping."
+python seed_products.py
 
 echo "🚀 Starting API server..."
 gunicorn --bind 0.0.0.0:5000 --workers 2 --reload "src.app:create_app()"

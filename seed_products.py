@@ -1,51 +1,128 @@
 """
-Run this once to populate your database with test data.
+Populates the database with sample data.
+Safe to run multiple times — skips anything that already exists.
 Usage: docker-compose exec api python seed_products.py
 """
 from src.app import create_app
 from src.models import db, User, Category, Product
 
-app = create_app()
 
-with app.app_context():
+def seed():
+    app = create_app()
 
-    # --- Create categories ---
-    categories = {
-        'electronics': Category(name='Electronics',  slug='electronics',  description='TVs, laptops, phones'),
-        'appliances':  Category(name='Appliances',   slug='appliances',   description='Washing machines, fridges'),
-        'gadgets':     Category(name='Gadgets',       slug='gadgets',      description='Smartwatches, accessories'),
-        'audio':       Category(name='Audio',         slug='audio',        description='Headphones, speakers'),
-    }
-    for cat in categories.values():
-        db.session.add(cat)
-    db.session.flush()  # Get IDs without committing
+    with app.app_context():
 
-    # --- Create products ---
-    products = [
-        Product(name='iPhone 15 Pro',         price=24999.00, brand='Apple',   sku='APPL-IP15P', stock=10, category_id=categories['electronics'].id),
-        Product(name='Samsung 65" 4K TV',     price=18999.00, brand='Samsung', sku='SAM-TV65',   stock=5,  category_id=categories['electronics'].id),
-        Product(name='MacBook Air M3',         price=29999.00, brand='Apple',   sku='APPL-MBA-M3',stock=8,  category_id=categories['electronics'].id),
-        Product(name='LG Washing Machine 9kg',price=12999.00, brand='LG',      sku='LG-WM9KG',  stock=6,  category_id=categories['appliances'].id),
-        Product(name='Samsung Double Door Fridge', price=21999.00, brand='Samsung', sku='SAM-FR2D', stock=4, category_id=categories['appliances'].id),
-        Product(name='Apple Watch Series 9',  price=9999.00,  brand='Apple',   sku='APPL-AWS9',  stock=15, category_id=categories['gadgets'].id),
-        Product(name='Dyson Vacuum V15',      price=16999.00, brand='Dyson',   sku='DYS-V15',    stock=7,  category_id=categories['appliances'].id),
-        Product(name='Sony WH-1000XM5',       price=8999.00,  brand='Sony',    sku='SNY-WH5',    stock=12, category_id=categories['audio'].id),
-    ]
-    for p in products:
-        db.session.add(p)
+        # ── Categories ────────────────────────────────────────────────────
+        # get_or_create pattern: only insert if the slug doesn't exist yet
+        # This makes the script safe to run multiple times
+        def get_or_create_category(name, slug, description):
+            existing = Category.query.filter_by(slug=slug).first()
+            if existing:
+                print(f"   Category already exists: {name}")
+                return existing
+            cat = Category(name=name, slug=slug, description=description)
+            db.session.add(cat)
+            db.session.flush()  # Get the ID before committing
+            print(f"   Created category: {name}")
+            return cat
 
-    # --- Create admin user ---
-    admin = User(email='admin@shopswift.com', full_name='Shop Admin', is_admin=True)
-    admin.set_password('Admin@123')
-    db.session.add(admin)
+        electronics = get_or_create_category(
+            'Electronics', 'electronics', 'TVs, laptops, phones'
+        )
+        appliances = get_or_create_category(
+            'Appliances', 'appliances', 'Washing machines, fridges'
+        )
+        gadgets = get_or_create_category(
+            'Gadgets', 'gadgets', 'Smartwatches, accessories'
+        )
+        audio = get_or_create_category(
+            'Audio', 'audio', 'Headphones, speakers'
+        )
 
-    # --- Create test customer ---
-    customer = User(email='customer@test.com', full_name='Test Customer',
-                    phone_number='+27821234567', address='123 Main St, Johannesburg')
-    customer.set_password('Test@123')
-    db.session.add(customer)
+        # ── Products ──────────────────────────────────────────────────────
+        # Check by SKU — unique identifier for each product
+        def get_or_create_product(name, price, brand, sku, stock, category):
+            existing = Product.query.filter_by(sku=sku).first()
+            if existing:
+                print(f"   Product already exists: {name}")
+                return existing
+            product = Product(
+                name=name,
+                price=price,
+                brand=brand,
+                sku=sku,
+                stock=stock,
+                category_id=category.id
+            )
+            db.session.add(product)
+            print(f"   Created product: {name}")
+            return product
 
-    db.session.commit()
-    print("✅ Database seeded!")
-    print("   Admin:    admin@shopswift.com / Admin@123")
-    print("   Customer: customer@test.com   / Test@123")
+        get_or_create_product(
+            'iPhone 15 Pro', 24999.00, 'Apple', 'APPL-IP15P', 10, electronics
+        )
+        get_or_create_product(
+            'Samsung 65" 4K TV', 18999.00, 'Samsung', 'SAM-TV65', 5, electronics
+        )
+        get_or_create_product(
+            'MacBook Air M3', 29999.00, 'Apple', 'APPL-MBA-M3', 8, electronics
+        )
+        get_or_create_product(
+            'LG Washing Machine 9kg', 12999.00, 'LG', 'LG-WM9KG', 6, appliances
+        )
+        get_or_create_product(
+            'Samsung Double Door Fridge', 21999.00, 'Samsung', 'SAM-FR2D', 4, appliances
+        )
+        get_or_create_product(
+            'Apple Watch Series 9', 9999.00, 'Apple', 'APPL-AWS9', 15, gadgets
+        )
+        get_or_create_product(
+            'Dyson Vacuum V15', 16999.00, 'Dyson', 'DYS-V15', 7, appliances
+        )
+        get_or_create_product(
+            'Sony WH-1000XM5', 8999.00, 'Sony', 'SNY-WH5', 12, audio
+        )
+
+        # ── Users ─────────────────────────────────────────────────────────
+        # Check by email — never create duplicate accounts
+        def get_or_create_user(email, full_name, password,
+                               is_admin=False, phone=None, address=None):
+            existing = User.query.filter_by(email=email).first()
+            if existing:
+                print(f"   User already exists: {email}")
+                return existing
+            user = User(
+                email=email,
+                full_name=full_name,
+                is_admin=is_admin,
+                phone_number=phone,
+                address=address
+            )
+            user.set_password(password)
+            db.session.add(user)
+            print(f"   Created user: {email}")
+            return user
+
+        get_or_create_user(
+            'admin@shopswift.com', 'Shop Admin', 'Admin@123', is_admin=True
+        )
+        get_or_create_user(
+            'customer@test.com', 'Test Customer', 'Test@123',
+            phone='+27821234567', address='123 Main St, Johannesburg'
+        )
+
+        # ── Commit everything at once ──────────────────────────────────────
+        # All inserts above are queued — this single commit saves them all.
+        # If anything fails, nothing is saved (atomic transaction).
+        db.session.commit()
+
+        print("")
+        print("✅ Database seeded successfully!")
+        print("   Admin:    admin@shopswift.com / Admin@123")
+        print("   Customer: customer@test.com   / Test@123")
+        print(f"   Products: {Product.query.count()} in database")
+        print(f"   Categories: {Category.query.count()} in database")
+
+
+if __name__ == '__main__':
+    seed()
