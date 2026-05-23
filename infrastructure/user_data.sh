@@ -116,7 +116,7 @@ docker compose -f docker-compose.prod.yml up -d --remove-orphans
 # Step 5: Health check — wait up to 60s for the API to respond
 echo "Waiting for API to be healthy..."
 for i in $(seq 1 12); do
-  if curl -sf http://localhost:5000/health > /dev/null 2>&1; then
+  if curl -sf http://localhost/health > /dev/null 2>&1; then
     echo "✅ API is healthy after ${i}×5s"
     exit 0
   fi
