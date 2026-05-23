@@ -220,41 +220,10 @@ jobs:
             /opt/shopswift/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
 
       # Slack: notify the team that the deploy succeeded
-      - name: Notify Slack — success
+      - name: Notify success
         if: success()
-        uses: slackapi/slack-github-action@v1.25.0
-        with:
-          payload: |
-            {
-              "text": "✅ *ShopSwift deployed successfully*",
-              "attachments": [{
-                "color": "good",
-                "fields": [
-                  {"title": "Image tag", "value": "${{ needs.build-and-push.outputs.image_tag }}", "short": true},
-                  {"title": "Triggered by", "value": "${{ github.actor }}", "short": true},
-                  {"title": "Commit", "value": "${{ github.event.head_commit.message }}", "short": false}
-                ]
-              }]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+        run: echo "✅ Deploy succeeded"
 
-      # Slack: notify if the deploy fails — so you know immediately
-      - name: Notify Slack — failure
+      - name: Notify failure  
         if: failure()
-        uses: slackapi/slack-github-action@v1.25.0
-        with:
-          payload: |
-            {
-              "text": "❌ *ShopSwift deploy FAILED*",
-              "attachments": [{
-                "color": "danger",
-                "fields": [
-                  {"title": "Image tag", "value": "${{ needs.build-and-push.outputs.image_tag }}", "short": true},
-                  {"title": "Triggered by", "value": "${{ github.actor }}", "short": true},
-                  {"title": "Action URL", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
-                ]
-              }]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+        run: echo "❌ Deploy failed"

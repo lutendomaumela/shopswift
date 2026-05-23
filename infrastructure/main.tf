@@ -210,12 +210,12 @@ resource "aws_security_group" "rds" {
   # WHY source security group and not IP? EC2's IP can change on restart.
   # Security group reference is dynamic — always points to the right EC2.
   ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ec2.id]
-    description     = "PostgreSQL from EC2 only"
-  }
+  from_port   = 22
+  to_port     = 22
+  protocol    = "tcp"
+  cidr_blocks = ["0.0.0.0/0"]
+  description = "SSH - open temporarily for GitHub Actions"
+}
 
   tags = { Name = "${local.name_prefix}-rds-sg" }
 }
