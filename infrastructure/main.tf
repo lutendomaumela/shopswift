@@ -202,23 +202,29 @@ resource "aws_security_group" "ec2" {
 
 # RDS security group
 resource "aws_security_group" "rds" {
-  name        = "${local.name_prefix}-rds-sg"
+  name        = "shopswift-production-rds-sg"
   description = "ShopSwift RDS - PostgreSQL accessible from EC2 ONLY"
   vpc_id      = aws_vpc.main.id
 
-  # PostgreSQL port — only from the EC2 security group, not from the internet
-  # WHY source security group and not IP? EC2's IP can change on restart.
-  # Security group reference is dynamic — always points to the right EC2.
   ingress {
-  from_port   = 22
-  to_port     = 22
-  protocol    = "tcp"
-  cidr_blocks = ["0.0.0.0/0"]
-  description = "SSH - open temporarily for GitHub Actions"
-}
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.1.0/24"]
+    description = "PostgreSQL from EC2 subnet"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "All outbound"
+  }
 
   tags = { Name = "${local.name_prefix}-rds-sg" }
 }
+  
 
 # ═══════════════════════════════════════════════════════════════════════════
 # IAM — permissions for EC2 to pull images and read secrets
