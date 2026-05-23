@@ -1,0 +1,23 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# terraform.tfvars.example
+# Copy this to terraform.tfvars and fill in your real values.
+# NEVER commit terraform.tfvars — it contains secrets.
+# It is already in .gitignore.
+# ─────────────────────────────────────────────────────────────────────────────
+
+region       = "af-south-1"   # Cape Town — closest to Pretoria
+project_name = "shopswift"
+environment  = "production"
+
+# Find your IP: https://checkip.amazonaws.com — add /32 at the end
+your_ip_cidr = "YOUR.PUBLIC.IP.HERE/32"
+
+# Generate: openssl rand -base64 32
+db_password      = "REPLACE_WITH_STRONG_PASSWORD_NO_AT_SLASH"
+jwt_secret_key   = "REPLACE_WITH_64_CHAR_RANDOM_STRING"
+flask_secret_key = "REPLACE_WITH_ANOTHER_64_CHAR_RANDOM_STRING"
+
+# These stay at free-tier defaults — do NOT change
+ec2_instance_type     = "t2.micro"
+rds_instance_class    = "db.t3.micro"
+rds_allocated_storage = 20

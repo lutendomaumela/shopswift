@@ -1,0 +1,51 @@
+#version: '3.8'
+
+services:
+
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB:       shopswift
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:     ["CMD-SHELL", "pg_isready -U postgres -d shopswift"]
+      interval: 5s
+      timeout:  5s
+      retries:  10                # Give it more attempts on first boot
+      start_period: 10s           # Grace period while DB initializes
+
+  api:
+    build: .
+    restart: on-failure           # Restart only on crash, not on manual stop
+    ports:
+      - "5000:5000"
+    environment:
+      DATABASE_URL:   postgresql://postgres:password@db:5432/shopswift
+      FLASK_ENV:      development
+      FLASK_APP:      src.app:create_app
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SECRET_KEY:     ${SECRET_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      
+    command: sh start.sh               # Use our robust startup script
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:

@@ -1,0 +1,260 @@
+name: ShopSwift CI/CD
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PIPELINE OVERVIEW
+#
+#  PR opened        → [test] runs pytest + flake8
+#  push to main     → [test] → [build-and-push to ECR] → [deploy to EC2]
+#
+# CHANGES FROM ORIGINAL:
+#  1. DockerHub replaced with AWS ECR (same network as EC2 = free + fast pulls)
+#  2. Added [deploy] job: SSHs into EC2, runs /opt/shopswift/deploy.sh
+#  3. Added Slack notifications for deploy success and failure
+#  4. Added Trivy security scan (fail on CRITICAL CVEs)
+#
+# GITHUB SECRETS REQUIRED:
+#   AWS_ACCESS_KEY_ID       → IAM user: shopswift-production-github-actions
+#   AWS_SECRET_ACCESS_KEY   → same IAM user
+#   AWS_REGION              → af-south-1
+#   ECR_REPOSITORY          → output from terraform apply (ecr_repository_url)
+#   EC2_HOST                → output from terraform apply (ec2_public_ip)
+#   EC2_SSH_KEY             → contents of ~/.ssh/shopswift (private key)
+#   SLACK_WEBHOOK           → Slack incoming webhook URL
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 1: test — runs on every PR and every push
+  # SAME AS YOUR ORIGINAL — not broken, not changed
+  # ═══════════════════════════════════════════════════════════════════════════
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER:     postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB:       shopswift_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint with flake8
+        run: |
+          flake8 src/ tests/ \
+            --max-line-length=120 \
+            --exclude=__pycache__,migrations,venv \
+            --ignore=E501,W503,E241,E221,E251,W292,E302,E303,F401,W291,W293,E261,E262,E272,E701,E225,E402,E128,F811,E711,E712,E114,E116
+
+      - name: Create pytest.ini
+        run: |
+          echo "[pytest]" > pytest.ini
+          echo "testpaths = tests" >> pytest.ini
+          echo "pythonpath = ." >> pytest.ini
+
+      - name: Run pytest
+        env:
+          DATABASE_URL:   postgresql://postgres:password@localhost:5432/shopswift_test
+          JWT_SECRET_KEY: test-secret-key-for-ci
+          SECRET_KEY:     test-flask-secret-for-ci
+          FLASK_ENV:      testing
+        run: pytest tests/ -v --tb=short
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2: build-and-push — only on push to main, only after tests pass
+  # CHANGED: DockerHub → AWS ECR + added Trivy security scan
+  # ═══════════════════════════════════════════════════════════════════════════
+  build-and-push:
+    name: Build, scan and push to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Configure AWS credentials using the GitHub Actions IAM user
+      # In Phase 8 we'll upgrade this to OIDC (no long-lived keys)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      # Login to ECR — different from DockerHub, uses AWS token not username/password
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          echo "image_tag=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "Image will be tagged: ${{ secrets.ECR_REPOSITORY }}:${SHORT_SHA}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the image — uses BuildKit layer caching to speed up repeat builds
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false                          # Don't push yet — scan first
+          load: true                           # Load into local Docker daemon for Trivy
+          tags: |
+            ${{ secrets.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}
+            ${{ secrets.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      # Trivy: scan the built image for CVEs before pushing
+      # WHY: catching vulnerabilities before they reach production is the whole point
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref:    ${{ secrets.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}
+          format:       table
+          exit-code:    1                      # FAIL the build on CRITICAL CVEs
+          severity:     CRITICAL               # Only block on critical, warn on HIGH
+          ignore-unfixed: true                 # Don't fail on CVEs with no fix available
+
+      # Push to ECR only after scan passes
+      - name: Push to ECR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}
+            ${{ secrets.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Print pushed image
+        run: |
+          echo "✅ Image pushed to ECR:"
+          echo "   ${{ secrets.ECR_REPOSITORY }}:${{ steps.meta.outputs.image_tag }}"
+          echo "   ${{ secrets.ECR_REPOSITORY }}:latest"
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 3: deploy — only after image is pushed to ECR
+  # NEW: SSHs into EC2 and runs the deploy script
+  #
+  # What happens on EC2:
+  #   1. deploy.sh fetches DATABASE_URL, JWT_SECRET_KEY, SECRET_KEY from SSM
+  #   2. Logs into ECR and pulls the new image
+  #   3. Runs docker compose -f docker-compose.prod.yml up -d
+  #   4. Hits /health to confirm the app is up
+  # ═══════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Copy the prod docker-compose and nginx config to EC2
+      # WHY scp before SSH? So the deploy script has the latest configs
+      - name: Copy compose and nginx config to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:        ${{ secrets.EC2_HOST }}
+          username:    ubuntu
+          key:         ${{ secrets.EC2_SSH_KEY }}
+          source:      "docker-compose.prod.yml,nginx/"
+          target:      "/opt/shopswift"
+
+      # SSH into EC2 and run the deploy script
+      - name: SSH deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key:      ${{ secrets.EC2_SSH_KEY }}
+          timeout:  120s
+          script: |
+            echo "=== Deploy triggered by GitHub Actions ==="
+            echo "Image tag: ${{ needs.build-and-push.outputs.image_tag }}"
+
+            # Run the deploy script with the exact image tag from this build
+            /opt/shopswift/deploy.sh "${{ needs.build-and-push.outputs.image_tag }}"
+
+      # Slack: notify the team that the deploy succeeded
+      - name: Notify Slack — success
+        if: success()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "✅ *ShopSwift deployed successfully*",
+              "attachments": [{
+                "color": "good",
+                "fields": [
+                  {"title": "Image tag", "value": "${{ needs.build-and-push.outputs.image_tag }}", "short": true},
+                  {"title": "Triggered by", "value": "${{ github.actor }}", "short": true},
+                  {"title": "Commit", "value": "${{ github.event.head_commit.message }}", "short": false}
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+      # Slack: notify if the deploy fails — so you know immediately
+      - name: Notify Slack — failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "❌ *ShopSwift deploy FAILED*",
+              "attachments": [{
+                "color": "danger",
+                "fields": [
+                  {"title": "Image tag", "value": "${{ needs.build-and-push.outputs.image_tag }}", "short": true},
+                  {"title": "Triggered by", "value": "${{ github.actor }}", "short": true},
+                  {"title": "Action URL", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false}
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
