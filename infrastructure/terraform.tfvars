@@ -10,7 +10,7 @@ project_name = "shopswift"
 environment  = "production"
 
 # Find your IP: https://checkip.amazonaws.com — add /32 at the end
-your_ip_cidr = "105.245.110.145/32"
+your_ip_cidr = "0.0.0.0/0"
 
 # Generate: openssl rand -base64 32
 db_password      = "CGPxTnWHNSJXSpf1dLX29IrQpPFgoqL9"

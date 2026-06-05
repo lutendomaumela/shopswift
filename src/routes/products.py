@@ -122,3 +122,14 @@ def get_categories():
     """GET /api/categories — List all categories"""
     categories = Category.query.all()
     return jsonify([c.to_dict() for c in categories]), 200
+
+@products_bp.route('/products/deals', methods=['GET'])
+def get_deals():
+    """GET /api/products/deals - Return discounted products"""
+    # You can add logic for products on sale
+    # For now, return products with stock > 0, limit 8
+    products = Product.query.filter_by(is_active=True)\
+        .filter(Product.stock > 0)\
+        .order_by(Product.price.desc())\
+        .limit(8).all()
+    return jsonify([p.to_dict() for p in products]), 200
