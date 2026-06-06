@@ -4,24 +4,9 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useCart } from '@/contexts/CartContext';
+import { productsAPI } from '@/lib/api';
+import type { Product } from '@/lib/types';
 import toast from 'react-hot-toast';
-import { fetchProductFromFakeStore, fetchProductsFromFakeStore, ShopSwiftProduct } from '@/lib/fakestore';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  image: string;
-  stock: number;
-  category: string;
-  description: string;
-  specifications?: {
-    brand?: string;
-    model?: string;
-    warranty?: string;
-    condition?: string;
-  };
-}
 
 export default function ProductDetailPage() {
   const params = useParams();
@@ -35,27 +20,33 @@ export default function ProductDetailPage() {
 
   useEffect(() => {
     const fetchProduct = async () => {
-  try {
-    setLoading(true);
-    const data = await fetchProductFromFakeStore(parseInt(params.id as string));
-    setProduct(data);
-    setSelectedImage(data.image);
-    
-    // Fetch related products
-    const allProducts = await fetchProductsFromFakeStore();
-    const related = allProducts
-      .filter(p => p.category === data.category && p.id !== data.id)
-      .slice(0, 4);
-    setRelatedProducts(related);
-    
-  } catch (error) {
-    console.error('Error fetching product:', error);
-    toast.error('Product not found');
-    router.push('/products');
-  } finally {
-    setLoading(false);
-  }
-};
+      try {
+        setLoading(true);
+        const id = parseInt(params.id as string);
+        const response = await productsAPI.getById(id);
+        const productData = response.data;
+        setProduct(productData);
+        setSelectedImage(productData.image_url || 'https://via.placeholder.com/600x600?text=No+Image');
+        
+        // Fetch related products (same category)
+        if (productData.category_id) {
+          const relatedResponse = await productsAPI.getAll({ category_id: productData.category_id, per_page: 5 });
+          let relatedData = [];
+          if (Array.isArray(relatedResponse.data)) {
+            relatedData = relatedResponse.data;
+          } else if ((relatedResponse.data as any).products) {
+            relatedData = (relatedResponse.data as any).products;
+          }
+          setRelatedProducts(relatedData.filter((p: { id: number; }) => p.id !== productData.id).slice(0, 4));
+        }
+      } catch (error) {
+        console.error('Error fetching product:', error);
+        toast.error('Product not found');
+        router.push('/products');
+      } finally {
+        setLoading(false);
+      }
+    };
 
     if (params.id) {
       fetchProduct();
@@ -69,18 +60,18 @@ export default function ProductDetailPage() {
     }
   };
 
-  const handleAddToCart = () => {
+  const handleAddToCart = async () => {
     if (product) {
-      for (let i = 0; i < quantity; i++) {
-        addToCart(product);
-      }
+      await addToCart(product.id, quantity);
       toast.success(`Added ${quantity} × ${product.name} to cart`);
     }
   };
 
-  const handleBuyNow = () => {
-    handleAddToCart();
-    router.push('/cart');
+  const handleBuyNow = async () => {
+    if (product) {
+      await addToCart(product.id, quantity);
+      router.push('/cart');
+    }
   };
 
   if (loading) {
@@ -122,10 +113,6 @@ export default function ProductDetailPage() {
           <span className="mx-2 text-gray-400">/</span>
           <Link href="/products" className="text-gray-500 hover:text-black">Products</Link>
           <span className="mx-2 text-gray-400">/</span>
-          <Link href={`/products?category=${product.category}`} className="text-gray-500 hover:text-black">
-            {product.category}
-          </Link>
-          <span className="mx-2 text-gray-400">/</span>
           <span className="text-gray-900">{product.name}</span>
         </nav>
 
@@ -137,28 +124,16 @@ export default function ProductDetailPage() {
                 <img
                   src={selectedImage}
                   alt={product.name}
-                  className="w-full h-96 object-cover"
+                  className="w-full h-96 object-contain p-4"
                 />
               </div>
-              {product.image && (
-                <div className="grid grid-cols-4 gap-2">
-                  <button
-                    onClick={() => setSelectedImage(product.image)}
-                    className={`border rounded-lg overflow-hidden ${
-                      selectedImage === product.image ? 'border-black ring-2 ring-black' : 'border-gray-200'
-                    }`}
-                  >
-                    <img src={product.image} alt={product.name} className="w-full h-20 object-cover" />
-                  </button>
-                </div>
-              )}
             </div>
 
             {/* Product Info */}
             <div className="mt-6 lg:mt-0">
               <div className="mb-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-500">{product.category}</span>
+                  <span className="text-sm text-gray-500">{product.brand || 'General'}</span>
                   {product.stock > 0 ? (
                     <span className="text-sm text-green-600">In Stock ({product.stock} available)</span>
                   ) : (
@@ -168,11 +143,6 @@ export default function ProductDetailPage() {
                 <h1 className="text-3xl font-bold text-gray-900 mt-2">{product.name}</h1>
                 <div className="mt-4">
                   <span className="text-4xl font-bold text-black">R{product.price.toLocaleString()}</span>
-                  {product.price > 10000 && (
-                    <span className="ml-2 text-sm text-gray-500 line-through">
-                      R{(product.price * 1.2).toLocaleString()}
-                    </span>
-                  )}
                 </div>
               </div>
 
@@ -181,22 +151,17 @@ export default function ProductDetailPage() {
               </div>
 
               {/* Specifications */}
-              {product.specifications && (
-                <div className="mb-6">
-                  <h3 className="font-semibold text-gray-900 mb-2">Specifications</h3>
-                  <div className="space-y-1 text-sm">
-                    {product.specifications.brand && (
-                      <p><span className="text-gray-600">Brand:</span> {product.specifications.brand}</p>
-                    )}
-                    {product.specifications.model && (
-                      <p><span className="text-gray-600">Model:</span> {product.specifications.model}</p>
-                    )}
-                    {product.specifications.warranty && (
-                      <p><span className="text-gray-600">Warranty:</span> {product.specifications.warranty}</p>
-                    )}
-                  </div>
+              <div className="mb-6">
+                <h3 className="font-semibold text-gray-900 mb-2">Specifications</h3>
+                <div className="space-y-1 text-sm">
+                  {product.brand && (
+                    <p><span className="text-gray-600">Brand:</span> {product.brand}</p>
+                  )}
+                  {product.sku && (
+                    <p><span className="text-gray-600">SKU:</span> {product.sku}</p>
+                  )}
                 </div>
-              )}
+              </div>
 
               {/* Quantity Selector */}
               {product.stock > 0 && (
@@ -269,11 +234,11 @@ export default function ProductDetailPage() {
                 <Link key={relatedProduct.id} href={`/products/${relatedProduct.id}`}>
                   <div className="bg-white rounded-lg shadow hover:shadow-lg transition p-4">
                     <img
-                      src={relatedProduct.image}
+                      src={relatedProduct.image_url || 'https://via.placeholder.com/200x200?text=No+Image'}
                       alt={relatedProduct.name}
-                      className="w-full h-48 object-cover rounded-lg mb-3"
+                      className="w-full h-48 object-contain rounded-lg mb-3"
                     />
-                    <h3 className="font-medium text-gray-900">{relatedProduct.name}</h3>
+                    <h3 className="font-medium text-gray-900 line-clamp-2">{relatedProduct.name}</h3>
                     <p className="text-lg font-bold text-black mt-1">R{relatedProduct.price.toLocaleString()}</p>
                   </div>
                 </Link>
@@ -285,4 +250,3 @@ export default function ProductDetailPage() {
     </div>
   );
 }
-

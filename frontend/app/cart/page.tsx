@@ -4,37 +4,38 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCart } from '@/contexts/CartContext';
+import { tokenStorage } from '@/lib/api';
 import toast from 'react-hot-toast';
 
 export default function CartPage() {
   const router = useRouter();
-  const { items, removeFromCart, updateQuantity, totalPrice } = useCart();
+  const { items, removeFromCart, updateQuantity, total, loading: cartLoading } = useCart();
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [shippingCost, setShippingCost] = useState(0);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    // Check if user is logged in
-    const token = localStorage.getItem('token');
+    // Check if user is logged in using tokenStorage
+    const token = tokenStorage.getAccessToken();
     setIsAuthenticated(!!token);
     
     // Calculate shipping (free over R1000)
-    if (totalPrice >= 1000) {
+    if (total >= 1000) {
       setShippingCost(0);
     } else {
       setShippingCost(99);
     }
-  }, [totalPrice]);
+  }, [total]);
 
-  const handleQuantityChange = (productId: number, newQuantity: number) => {
+  const handleQuantityChange = (cartItemId: number, newQuantity: number) => {
     if (newQuantity < 1) {
-      removeFromCart(productId);
+      removeFromCart(cartItemId);
     } else {
-      updateQuantity(productId, newQuantity);
+      updateQuantity(cartItemId, newQuantity);
     }
   };
 
-  const handleCheckout = async () => {
+  const handleCheckout = () => {
     if (!isAuthenticated) {
       toast.error('Please login to continue with checkout');
       router.push('/login');
@@ -45,50 +46,28 @@ export default function CartPage() {
       toast.error('Your cart is empty');
       return;
     }
-  // Navigate to checkout page instead of creating order directly
-  router.push('/checkout');
-    setIsCheckingOut(true);
     
-    try {
-      // Create order in your Flask backend
-      const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:5000/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          items: items.map(item => ({
-            product_id: item.id,
-            quantity: item.quantity,
-            price: item.price
-          })),
-          total_amount: totalPrice + shippingCost,
-          shipping_cost: shippingCost,
-        }),
-      });
-
-      if (response.ok) {
-        const order = await response.json();
-        toast.success('Order created successfully!');
-        router.push(`/orders/${order.id}`);
-      } else {
-        toast.error('Failed to create order');
-      }
-    } catch (error) {
-      console.error('Checkout error:', error);
-      toast.error('Unable to process checkout');
-    } finally {
-      setIsCheckingOut(false);
-    }
+    router.push('/checkout');
   };
 
-  const subtotal = totalPrice;
-  const tax = subtotal * 0.15; // 15% VAT
-  const total = subtotal + shippingCost + tax;
+  const subtotal = total;
+  const tax = subtotal * 0.15;
+  const grandTotal = subtotal + shippingCost + tax;
 
-  if (items.length === 0) {
+  if (cartLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-12">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="animate-pulse">
+            <div className="bg-gray-200 h-8 w-48 mb-8"></div>
+            <div className="bg-gray-200 h-64 rounded-lg"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!items || items.length === 0) {
     return (
       <div className="min-h-screen bg-gray-50 py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -110,12 +89,12 @@ export default function CartPage() {
   return (
     <div className="min-h-screen bg-gray-50 py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-8">Shopping Cart</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-8">Shopping Cart ({items.length} items)</h1>
         
         <div className="lg:grid lg:grid-cols-12 lg:gap-8">
           {/* Cart Items */}
           <div className="lg:col-span-8">
-            <div className="bg-white rounded-lg shadow">
+            <div className="bg-white rounded-lg shadow overflow-hidden">
               <div className="hidden md:grid md:grid-cols-12 gap-4 px-6 py-4 border-b bg-gray-50 text-sm font-medium text-gray-700">
                 <div className="md:col-span-6">Product</div>
                 <div className="md:col-span-2 text-center">Price</div>
@@ -126,82 +105,71 @@ export default function CartPage() {
               <div className="divide-y divide-gray-200">
                 {items.map((item) => (
                   <div key={item.id} className="px-4 py-6 md:px-6">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+                    <div className="flex flex-wrap md:flex-nowrap items-center gap-4">
                       {/* Product Info */}
-                      <div className="flex flex-1 md:grid md:grid-cols-12 md:gap-4">
-                        <div className="md:col-span-6">
-                          <div className="flex space-x-4">
-                            <div className="flex-shrink-0 w-24 h-24 bg-gray-100 rounded-lg overflow-hidden">
-                              <img
-                                src={item.image}
-                                alt={item.name}
-                                className="w-full h-full object-cover"
-                              />
-                            </div>
-                            <div className="flex-1">
-                              <h3 className="text-base font-medium text-gray-900">
-                                {item.name}
-                              </h3>
-                              <button
-                                onClick={() => removeFromCart(item.id)}
-                                className="mt-1 text-sm text-red-600 hover:text-red-800 transition"
-                              >
-                                Remove
-                              </button>
+                      <div className="flex-1 min-w-[200px]">
+                        <div className="flex gap-4">
+                          <div className="flex-shrink-0 w-20 h-20 bg-gray-100 rounded-lg overflow-hidden">
+                            {/* Placeholder image - using product name as fallback */}
+                            <div className="w-full h-full flex items-center justify-center bg-gray-200 text-gray-500 text-xs">
+                              No img
                             </div>
                           </div>
-                        </div>
-                        
-                        {/* Price */}
-                        <div className="mt-4 md:mt-0 md:col-span-2">
-                          <div className="flex justify-between md:justify-center">
-                            <span className="text-sm text-gray-600 md:hidden">Price:</span>
-                            <span className="text-sm font-medium text-gray-900">
-                              R{item.price.toLocaleString()}
-                            </span>
+                          <div>
+                            <h3 className="font-medium text-gray-900">
+                              {item.name}
+                            </h3>
+                            <button
+                              onClick={() => removeFromCart(item.id)}
+                              className="mt-2 text-sm text-red-600 hover:text-red-800 transition"
+                            >
+                              Remove
+                            </button>
                           </div>
                         </div>
-                        
-                        {/* Quantity */}
-                        <div className="mt-4 md:mt-0 md:col-span-2">
-                          <div className="flex items-center justify-between md:justify-center space-x-3">
-                            <span className="text-sm text-gray-600 md:hidden">Quantity:</span>
-                            <div className="flex items-center space-x-2">
-                              <button
-                                onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
-                                className="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-md hover:bg-gray-50 transition"
-                              >
-                                -
-                              </button>
-                              <span className="w-12 text-center text-sm font-medium">
-                                {item.quantity}
-                              </span>
-                              <button
-                                onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
-                                className="w-8 h-8 flex items-center justify-center border border-gray-300 rounded-md hover:bg-gray-50 transition"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
+                      </div>
+                      
+                      {/* Price */}
+                      <div className="w-24 text-center">
+                        <span className="text-gray-600 md:hidden text-xs block">Price:</span>
+                        <span className="font-medium">
+                          R{item.price ? item.price.toLocaleString() : '0'}
+                        </span>
+                      </div>
+                      
+                      {/* Quantity */}
+                      <div className="w-28 text-center">
+                        <span className="text-gray-600 md:hidden text-xs block">Qty:</span>
+                        <div className="flex items-center justify-center gap-2">
+                          <button
+                            onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
+                            className="w-7 h-7 flex items-center justify-center border border-gray-300 rounded-md hover:bg-gray-50"
+                          >
+                            -
+                          </button>
+                          <span className="w-8 text-center">{item.quantity}</span>
+                          <button
+                            onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
+                            className="w-7 h-7 flex items-center justify-center border border-gray-300 rounded-md hover:bg-gray-50"
+                          >
+                            +
+                          </button>
                         </div>
-                        
-                        {/* Total */}
-                        <div className="mt-4 md:mt-0 md:col-span-2">
-                          <div className="flex justify-between md:justify-end">
-                            <span className="text-sm text-gray-600 md:hidden">Total:</span>
-                            <span className="text-base font-semibold text-gray-900">
-                              R{(item.price * item.quantity).toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
+                      </div>
+                      
+                      {/* Total */}
+                      <div className="w-28 text-right">
+                        <span className="text-gray-600 md:hidden text-xs block">Total:</span>
+                        <span className="font-semibold">
+                          R{item.price ? (item.price * item.quantity).toLocaleString() : '0'}
+                        </span>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
               
-              <div className="px-4 py-4 border-t md:px-6">
+              <div className="px-6 py-4 border-t">
                 <Link
                   href="/products"
                   className="text-sm text-black hover:text-gray-600 transition inline-flex items-center"
@@ -219,102 +187,52 @@ export default function CartPage() {
                 <h2 className="text-lg font-semibold text-gray-900">Order Summary</h2>
               </div>
               
-              <div className="px-6 py-4 space-y-4">
-                {/* Subtotal */}
-                <div className="flex justify-between text-sm">
+              <div className="p-6 space-y-4">
+                <div className="flex justify-between">
                   <span className="text-gray-600">Subtotal</span>
-                  <span className="font-medium text-gray-900">R{subtotal.toLocaleString()}</span>
+                  <span className="font-medium">R{subtotal.toLocaleString()}</span>
                 </div>
-                
-                {/* Shipping */}
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between">
                   <span className="text-gray-600">Shipping</span>
-                  <div>
-                    {shippingCost === 0 ? (
-                      <span className="text-green-600 font-medium">Free</span>
-                    ) : (
-                      <span className="font-medium text-gray-900">R{shippingCost.toLocaleString()}</span>
-                    )}
-                  </div>
+                  {shippingCost === 0 ? (
+                    <span className="text-green-600 font-medium">Free</span>
+                  ) : (
+                    <span className="font-medium">R{shippingCost.toLocaleString()}</span>
+                  )}
                 </div>
-                
-                {/* Tax (VAT) */}
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between">
                   <span className="text-gray-600">Tax (15% VAT)</span>
-                  <span className="font-medium text-gray-900">R{tax.toLocaleString()}</span>
+                  <span className="font-medium">R{tax.toLocaleString()}</span>
                 </div>
-                
-                {/* Total */}
                 <div className="pt-4 border-t">
-                  <div className="flex justify-between text-base font-semibold">
+                  <div className="flex justify-between text-lg font-bold">
                     <span>Total</span>
-                    <span className="text-xl">R{total.toLocaleString()}</span>
+                    <span>R{grandTotal.toLocaleString()}</span>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Includes VAT and shipping
-                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Includes VAT and shipping</p>
                 </div>
                 
-                {/* Free Shipping Message */}
-                {totalPrice < 1000 && (
+                {total < 1000 && total > 0 && (
                   <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
                     <p className="text-xs text-blue-800">
-                      Add R{(1000 - totalPrice).toLocaleString()} more to get free shipping
+                      Add R{(1000 - total).toLocaleString()} more for free shipping
                     </p>
-                    <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                    <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                       <div 
-                        className="bg-black h-1.5 rounded-full transition-all duration-300"
-                        style={{ width: `${(totalPrice / 1000) * 100}%` }}
-                      ></div>
+                        className="h-full bg-black rounded-full transition-all"
+                        style={{ width: `${Math.min((total / 1000) * 100, 100)}%` }}
+                      />
                     </div>
                   </div>
                 )}
                 
-                {/* Checkout Button */}
                 <button
                   onClick={handleCheckout}
                   disabled={isCheckingOut || items.length === 0}
-                  className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-base font-medium text-white bg-black hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  className="w-full py-3 bg-black text-white rounded-lg hover:bg-gray-800 transition disabled:opacity-50"
                 >
                   {isCheckingOut ? 'Processing...' : 'Proceed to Checkout'}
                 </button>
-                
-                {/* Payment Methods Note */}
-                <div className="text-center">
-                  <p className="text-xs text-gray-500">
-                    Secure payment powered by ShopSwift
-                  </p>
-                  <div className="flex justify-center space-x-2 mt-2">
-                    <span className="text-xs text-gray-400">Visa</span>
-                    <span className="text-xs text-gray-400">Mastercard</span>
-                    <span className="text-xs text-gray-400">PayPal</span>
-                    <span className="text-xs text-gray-400">EFT</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            {/* Trust Badges */}
-            <div className="mt-4 bg-white rounded-lg shadow p-4">
-              <div className="flex justify-around text-center">
-                <div>
-                  <svg className="mx-auto h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
-                  <p className="text-xs text-gray-600 mt-1">Secure Checkout</p>
-                </div>
-                <div>
-                  <svg className="mx-auto h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                  </svg>
-                  <p className="text-xs text-gray-600 mt-1">Fast Delivery</p>
-                </div>
-                <div>
-                  <svg className="mx-auto h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
-                  <p className="text-xs text-gray-600 mt-1">Secure Returns</p>
-                </div>
               </div>
             </div>
           </div>

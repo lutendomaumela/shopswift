@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCart } from '@/contexts/CartContext';
+import { tokenStorage } from '@/lib/api';
+import { ordersAPI } from '@/lib/api';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
 
@@ -26,7 +28,7 @@ interface PaymentDetails {
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const { items, totalPrice, clearCart } = useCart();
+  const { items, total, clearCart, refreshCart } = useCart();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -52,18 +54,22 @@ export default function CheckoutPage() {
   const [paymentMethod, setPaymentMethod] = useState<'card' | 'eft' | 'cod'>('card');
 
   useEffect(() => {
-    // Check if user is logged in
-    const token = localStorage.getItem('token');
-    const user = localStorage.getItem('user');
+    // Check if user is logged in using tokenStorage
+    const token = tokenStorage.getAccessToken();
+    const user = tokenStorage.getUser();
     
     if (token && user) {
       setIsAuthenticated(true);
-      const userData = JSON.parse(user);
       setShippingDetails(prev => ({
         ...prev,
-        fullName: userData.name || '',
-        email: userData.email || '',
+        fullName: user.full_name || '',
+        email: user.email || '',
       }));
+    } else {
+      // Not logged in, redirect to login
+      toast.error('Please login to checkout');
+      router.push('/login');
+      return;
     }
     
     // Redirect if cart is empty
@@ -73,10 +79,11 @@ export default function CheckoutPage() {
     }
   }, [items.length, router]);
 
-  const subtotal = totalPrice;
+  const subtotal = total;
   const shippingCost = subtotal >= 1000 ? 0 : 99;
   const tax = subtotal * 0.15;
-  const total = subtotal + shippingCost + tax;
+  const codFee = paymentMethod === 'cod' ? 50 : 0;
+  const grandTotal = subtotal + shippingCost + tax + codFee;
 
   const handleShippingSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,50 +109,25 @@ export default function CheckoutPage() {
     setLoading(true);
     
     try {
-      const token = localStorage.getItem('token');
+      // Format shipping address as a single string (your backend expects a string)
+      const shippingAddressString = `${shippingDetails.addressLine1}${shippingDetails.addressLine2 ? ', ' + shippingDetails.addressLine2 : ''}, ${shippingDetails.city}, ${shippingDetails.postalCode}, ${shippingDetails.province}`;
       
-      // Create order in backend
-      const orderData = {
-        items: items.map(item => ({
-          product_id: item.id,
-          quantity: item.quantity,
-          price: item.price,
-          name: item.name,
-        })),
-        shipping_details: shippingDetails,
-        payment_method: paymentMethod,
-        subtotal: subtotal,
-        shipping_cost: shippingCost,
-        tax: tax,
-        total_amount: total,
-      };
+      // Create order in backend using ordersAPI
+      const response = await ordersAPI.create(shippingAddressString);
       
-      const response = await fetch('http://localhost:5000/api/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token && { Authorization: `Bearer ${token}` }),
-        },
-        body: JSON.stringify(orderData),
-      });
-      
-      if (response.ok) {
-        const order = await response.json();
-        clearCart();
+      if (response.status === 201 || response.status === 200) {
+        const order = response.data;
+        // Clear cart after successful order
+        await clearCart();
+        await refreshCart();
         toast.success('Order placed successfully!');
         router.push(`/orders/${order.id}`);
       } else {
-        // Mock success for demo
-        toast.success('Order placed successfully! (Demo)');
-        clearCart();
-        router.push('/orders');
+        throw new Error('Order creation failed');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Checkout error:', error);
-      // Mock success for demo
-      toast.success('Order placed successfully! (Demo)');
-      clearCart();
-      router.push('/orders');
+      toast.error(error.response?.data?.error || 'Failed to place order. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -196,6 +178,7 @@ export default function CheckoutPage() {
                         value={shippingDetails.fullName}
                         onChange={(e) => setShippingDetails({ ...shippingDetails, fullName: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-black focus:border-black"
+                        placeholder="John Doe"
                       />
                     </div>
                     
@@ -210,6 +193,7 @@ export default function CheckoutPage() {
                           value={shippingDetails.email}
                           onChange={(e) => setShippingDetails({ ...shippingDetails, email: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-black focus:border-black"
+                          placeholder="you@example.com"
                         />
                       </div>
                       
@@ -223,6 +207,7 @@ export default function CheckoutPage() {
                           value={shippingDetails.phone}
                           onChange={(e) => setShippingDetails({ ...shippingDetails, phone: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-black focus:border-black"
+                          placeholder="+27 XX XXX XXXX"
                         />
                       </div>
                     </div>
@@ -237,6 +222,7 @@ export default function CheckoutPage() {
                         value={shippingDetails.addressLine1}
                         onChange={(e) => setShippingDetails({ ...shippingDetails, addressLine1: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-black focus:border-black"
+                        placeholder="Street address, P.O. Box"
                       />
                     </div>
                     
@@ -249,6 +235,7 @@ export default function CheckoutPage() {
                         value={shippingDetails.addressLine2}
                         onChange={(e) => setShippingDetails({ ...shippingDetails, addressLine2: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-black focus:border-black"
+                        placeholder="Apartment, suite, unit, etc."
                       />
                     </div>
                     
@@ -263,6 +250,7 @@ export default function CheckoutPage() {
                           value={shippingDetails.city}
                           onChange={(e) => setShippingDetails({ ...shippingDetails, city: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-black focus:border-black"
+                          placeholder="Cape Town"
                         />
                       </div>
                       
@@ -276,6 +264,7 @@ export default function CheckoutPage() {
                           value={shippingDetails.postalCode}
                           onChange={(e) => setShippingDetails({ ...shippingDetails, postalCode: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-black focus:border-black"
+                          placeholder="8001"
                         />
                       </div>
                     </div>
@@ -381,6 +370,7 @@ export default function CheckoutPage() {
                         </label>
                         <input
                           type="text"
+                          placeholder="JOHN DOE"
                           value={paymentDetails.cardName}
                           onChange={(e) => setPaymentDetails({ ...paymentDetails, cardName: e.target.value })}
                           className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-black focus:border-black"
@@ -446,7 +436,7 @@ export default function CheckoutPage() {
                       disabled={loading}
                       className="flex-1 px-6 py-2 bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 transition"
                     >
-                      {loading ? 'Processing...' : `Place Order • R${total.toLocaleString()}`}
+                      {loading ? 'Processing...' : `Place Order • R${grandTotal.toLocaleString()}`}
                     </button>
                   </div>
                 </form>
@@ -462,7 +452,7 @@ export default function CheckoutPage() {
               <div className="space-y-4 max-h-96 overflow-y-auto mb-4">
                 {items.map((item) => (
                   <div key={item.id} className="flex gap-3">
-                    <img src={item.image} alt={item.name} className="w-16 h-16 object-cover rounded" />
+                    <img src={item.image_url || 'https://via.placeholder.com/64x64?text=Product'} alt={item.name} className="w-16 h-16 object-cover rounded" />
                     <div className="flex-1">
                       <p className="text-sm font-medium text-gray-900">{item.name}</p>
                       <p className="text-sm text-gray-500">Qty: {item.quantity}</p>
@@ -485,12 +475,24 @@ export default function CheckoutPage() {
                   <span className="text-gray-600">Tax (15% VAT)</span>
                   <span>R{tax.toLocaleString()}</span>
                 </div>
+                {paymentMethod === 'cod' && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">COD Fee</span>
+                    <span>R50.00</span>
+                  </div>
+                )}
                 <div className="border-t pt-2 mt-2">
                   <div className="flex justify-between font-semibold text-lg">
                     <span>Total</span>
-                    <span>R{total.toLocaleString()}</span>
+                    <span>R{grandTotal.toLocaleString()}</span>
                   </div>
                 </div>
+              </div>
+              
+              <div className="mt-4 pt-4 border-t">
+                <Link href="/cart" className="text-sm text-gray-600 hover:text-black transition">
+                  ← Back to Cart
+                </Link>
               </div>
             </div>
           </div>

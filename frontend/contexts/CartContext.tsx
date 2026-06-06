@@ -26,14 +26,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [total, setTotal]         = useState(0)
   const [loading, setLoading]     = useState(true)
 
-  // WHY useAuth() here?
-  // Previously the cart checked localStorage directly on every render.
-  // Now it reacts to auth state — when user logs in, cart loads automatically.
-  // When user logs out, cart clears automatically. No manual wiring needed.
   const { isAuthenticated } = useAuth()
 
   const refreshCart = useCallback(async () => {
-    // Use tokenStorage instead of localStorage directly — SSR-safe
     const token = tokenStorage.getAccessToken()
     if (!token) {
       setItems([])
@@ -46,9 +41,15 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await cartAPI.getCart()
       const data: CartResponse = response.data
-      setItems(data.items)
-      setItemCount(data.item_count)
-      setTotal(data.total)
+      // Ensure each item has valid price (fallback to 0 if undefined)
+      const safeItems = (data.items || []).map(item => ({
+        ...item,
+        price: item.price || 0,
+        subtotal: item.subtotal || (item.price || 0) * item.quantity
+      }))
+      setItems(safeItems)
+      setItemCount(data.item_count || 0)
+      setTotal(data.total || 0)
     } catch (error) {
       console.error('Failed to load cart:', error)
       setItems([])
@@ -60,8 +61,6 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   // Re-fetch cart whenever auth state changes
-  // Login  → isAuthenticated becomes true  → cart loads
-  // Logout → isAuthenticated becomes false → cart clears
   useEffect(() => {
     if (isAuthenticated) {
       refreshCart()

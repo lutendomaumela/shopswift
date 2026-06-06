@@ -16,7 +16,20 @@ def get_cart():
     user_id    = int(get_jwt_identity())
     cart_items = CartItem.query.filter_by(user_id=user_id).all()
 
-    items = [item.to_dict() for item in cart_items]
+    # Flatten the product data for frontend convenience
+    items = []
+    for item in cart_items:
+        product = item.product
+        items.append({
+            'id': item.id,
+            'product_id': product.id,
+            'name': product.name,
+            'price': float(product.price),
+            'image_url': product.image_url,
+            'quantity': item.quantity,
+            'subtotal': float(product.price) * item.quantity
+        })
+    
     total = sum(item['subtotal'] for item in items)
 
     return jsonify({
@@ -96,7 +109,18 @@ def update_cart_item(item_id):
 
     cart_item.quantity = quantity
     db.session.commit()
-    return jsonify(cart_item.to_dict()), 200
+    
+    # Return flattened response
+    product = cart_item.product
+    return jsonify({
+        'id': cart_item.id,
+        'product_id': product.id,
+        'name': product.name,
+        'price': float(product.price),
+        'image_url': product.image_url,
+        'quantity': cart_item.quantity,
+        'subtotal': float(product.price) * cart_item.quantity
+    }), 200
 
 
 @cart_bp.route('/cart/<int:item_id>', methods=['DELETE'])
