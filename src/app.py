@@ -64,46 +64,19 @@ def create_app():
         app.config.from_object(DevelopmentConfig)
 
     # ========== CORS CONFIGURATION ==========
-    # Allow all origins for development (restrict in production)
-    CORS(app, 
-         origins=[
-             'http://localhost:3000',
-             'http://127.0.0.1:3000',
-             'http://13.245.255.204',
-             'http://13.245.255.204:80',
-             'http://localhost',
-             'http://0.0.0.0:3000',
-             '*'
-         ],
-         supports_credentials=True,
-         allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
-         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-         expose_headers=['Content-Type', 'Authorization']
+    # ── CORS — one place only, flask-cors handles everything ──────────────────
+    CORS(app,
+     resources={r"/api/*": {"origins": [
+         "http://localhost:3000",
+         "http://127.0.0.1:3000",
+         "http://13.245.255.204",
+     ]}},
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
     )
     
-    # Manually add CORS headers as a fallback
-    @app.after_request
-    def add_cors_headers(response):
-        origin = request.headers.get('Origin')
-        if origin:
-            response.headers.add('Access-Control-Allow-Origin', origin)
-            response.headers.add('Access-Control-Allow-Credentials', 'true')
-            response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-            response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH')
-        return response
-    
-    # Handle OPTIONS requests explicitly
-    @app.route('/<path:path>', methods=['OPTIONS'])
-    @app.route('/', methods=['OPTIONS'])
-    def handle_options(path=None):
-        response = jsonify({})
-        origin = request.headers.get('Origin')
-        if origin:
-            response.headers.add('Access-Control-Allow-Origin', origin)
-            response.headers.add('Access-Control-Allow-Credentials', 'true')
-            response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-            response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH')
-        return response, 200
+   
 
     # ── Initialize Flask extensions ──────────────────────────────────────────
     db.init_app(app)
