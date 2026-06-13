@@ -1,27 +1,51 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
-import { ShoppingCartIcon, UserIcon, MagnifyingGlassIcon, Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline'
+import { useState, useEffect, useRef } from 'react'
+import { ShoppingCartIcon, UserIcon, MagnifyingGlassIcon, Bars3Icon, XMarkIcon, ChevronDownIcon } from '@heroicons/react/24/outline'
 import { useCart } from '@/contexts/CartContext'
 import { useAuth } from '@/contexts/AuthContext'
+import { useRouter } from 'next/navigation'
 
 export default function Header() {
-  const [isMenuOpen, setIsMenuOpen]   = useState(false)
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
 
-  // REPLACED: manual localStorage useEffect
-  // NOW: reacts to auth state globally — login/logout anywhere updates the header
-  const { user, logout } = useAuth()
-
-  // FIXED: totalItems → itemCount (matches your CartContext shape)
+  const { user, logout, isAuthenticated } = useAuth()
   const { itemCount } = useCart()
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsUserDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
     if (searchQuery.trim()) {
-      window.location.href = `/products?search=${encodeURIComponent(searchQuery)}`
+      router.push(`/products?search=${encodeURIComponent(searchQuery)}`)
     }
+  }
+
+  const handleOrdersClick = (e: React.MouseEvent) => {
+    if (!isAuthenticated) {
+      e.preventDefault()
+      router.push('/login')
+    }
+  }
+
+  const handleLogout = async () => {
+    setIsUserDropdownOpen(false)
+    setIsMenuOpen(false)
+    await logout()
   }
 
   return (
@@ -49,8 +73,17 @@ export default function Header() {
           {/* Desktop Navigation */}
           <div className="hidden md:flex space-x-8">
             <Link href="/products" className="text-gray-700 hover:text-black transition">Products</Link>
-            <Link href="/orders"   className="text-gray-700 hover:text-black transition">Orders</Link>
-            <Link href="/deals"    className="text-gray-700 hover:text-black transition">Deals</Link>
+            {isAuthenticated ? (
+              <Link href="/orders" className="text-gray-700 hover:text-black transition">Orders</Link>
+            ) : (
+              <button
+                onClick={() => router.push('/login')}
+                className="text-gray-700 hover:text-black transition cursor-pointer"
+              >
+                Orders
+              </button>
+            )}
+            <Link href="/deals" className="text-gray-700 hover:text-black transition">Deals</Link>
           </div>
 
           {/* Search Bar - Desktop */}
@@ -82,29 +115,42 @@ export default function Header() {
               )}
             </Link>
 
-            {/* User — FIXED: user.full_name instead of user.name */}
-            {user ? (
-              <div className="relative group">
-                <button className="flex items-center space-x-1">
-                  <UserIcon className="h-6 w-6 text-gray-700 hover:text-black transition" />
+            {/* User Dropdown - Click to open, not hover */}
+            {isAuthenticated && user ? (
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setIsUserDropdownOpen(!isUserDropdownOpen)}
+                  className="flex items-center space-x-1 px-2 py-1 rounded-md hover:bg-gray-100 transition"
+                >
+                  <UserIcon className="h-6 w-6 text-gray-700" />
                   <span className="text-sm text-gray-700 hidden md:inline">
                     {user.full_name?.split(' ')[0]}
                   </span>
+                  <ChevronDownIcon className={`h-4 w-4 text-gray-500 transition-transform duration-200 ${isUserDropdownOpen ? 'rotate-180' : ''}`} />
                 </button>
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 hidden group-hover:block border border-gray-100">
-                  <Link
-                    href="/orders"
-                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                  >
-                    My orders
-                  </Link>
-                  <button
-                    onClick={logout}
-                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                  >
-                    Sign out
-                  </button>
-                </div>
+
+                {/* Dropdown menu */}
+                {isUserDropdownOpen && (
+                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg py-1 border border-gray-100 z-50">
+                    <div className="px-4 py-3 border-b border-gray-100">
+                      <p className="text-sm font-medium text-gray-900">{user.full_name}</p>
+                      <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                    </div>
+                    <Link
+                      href="/orders"
+                      onClick={() => setIsUserDropdownOpen(false)}
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                    >
+                      My Orders
+                    </Link>
+                    <button
+                      onClick={handleLogout}
+                      className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100 border-t border-gray-100 mt-1"
+                    >
+                      Sign Out
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="hidden md:flex items-center space-x-3">
@@ -126,22 +172,54 @@ export default function Header() {
         {isMenuOpen && (
           <div className="md:hidden py-4 border-t">
             <div className="flex flex-col space-y-3">
-              <Link href="/products" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>Products</Link>
-              <Link href="/orders"   className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>Orders</Link>
-              <Link href="/deals"    className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>Deals</Link>
+              <Link href="/products" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>
+                Products
+              </Link>
+              {isAuthenticated ? (
+                <Link href="/orders" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>
+                  Orders
+                </Link>
+              ) : (
+                <button
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    router.push('/login')
+                  }}
+                  className="text-left text-gray-700 hover:text-black px-2 py-1"
+                >
+                  Orders
+                </button>
+              )}
+              <Link href="/deals" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>
+                Deals
+              </Link>
 
-              {user ? (
+              {isAuthenticated && user ? (
                 <>
-                  <span className="text-gray-600 px-2 py-1">Hello, {user.full_name?.split(' ')[0]}</span>
-                  <Link href="/orders" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>My orders</Link>
-                  <button onClick={logout} className="text-left text-gray-700 hover:text-black px-2 py-1">
-                    Sign out
+                  <div className="border-t pt-3 mt-2">
+                    <div className="px-2 py-1">
+                      <p className="text-sm font-medium text-gray-900">{user.full_name}</p>
+                      <p className="text-xs text-gray-500 truncate">{user.email}</p>
+                    </div>
+                  </div>
+                  <Link href="/orders" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>
+                    My Orders
+                  </Link>
+                  <button
+                    onClick={handleLogout}
+                    className="text-left text-red-600 hover:text-red-700 px-2 py-1"
+                  >
+                    Sign Out
                   </button>
                 </>
               ) : (
                 <>
-                  <Link href="/login"    className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>Login</Link>
-                  <Link href="/register" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>Register</Link>
+                  <Link href="/login" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>
+                    Login
+                  </Link>
+                  <Link href="/register" className="text-gray-700 hover:text-black px-2 py-1" onClick={() => setIsMenuOpen(false)}>
+                    Register
+                  </Link>
                 </>
               )}
             </div>

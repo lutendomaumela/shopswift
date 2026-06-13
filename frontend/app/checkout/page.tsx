@@ -96,42 +96,49 @@ export default function CheckoutPage() {
     window.scrollTo(0, 0);
   };
 
-  const handlePaymentSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (paymentMethod === 'card') {
-      if (!paymentDetails.cardNumber || !paymentDetails.cardName || !paymentDetails.expiryDate || !paymentDetails.cvv) {
-        toast.error('Please fill in all card details');
-        return;
-      }
+ const handlePaymentSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  
+  if (paymentMethod === 'card') {
+    if (!paymentDetails.cardNumber || !paymentDetails.cardName || !paymentDetails.expiryDate || !paymentDetails.cvv) {
+      toast.error('Please fill in all card details');
+      return;
     }
+  }
+  
+  setLoading(true);
+  
+  try {
+    // Format shipping address as a single string
+    const shippingAddressString = `${shippingDetails.addressLine1}${shippingDetails.addressLine2 ? ', ' + shippingDetails.addressLine2 : ''}, ${shippingDetails.city}, ${shippingDetails.postalCode}, ${shippingDetails.province}`;
     
-    setLoading(true);
+    // Create order in backend using ordersAPI
+    const response = await ordersAPI.create(shippingAddressString);
     
-    try {
-      // Format shipping address as a single string (your backend expects a string)
-      const shippingAddressString = `${shippingDetails.addressLine1}${shippingDetails.addressLine2 ? ', ' + shippingDetails.addressLine2 : ''}, ${shippingDetails.city}, ${shippingDetails.postalCode}, ${shippingDetails.province}`;
+    // The response.data now has { message: string, order: Order }
+    console.log('Order response:', response.data);
+    
+    if (response.status === 201 || response.status === 200) {
+      const order = response.data.order;  // Extract the order from the response
+      const orderId = order.id;
       
-      // Create order in backend using ordersAPI
-      const response = await ordersAPI.create(shippingAddressString);
+      console.log('Order ID:', orderId);
       
-      if (response.status === 201 || response.status === 200) {
-        const order = response.data;
-        // Clear cart after successful order
-        await clearCart();
-        await refreshCart();
-        toast.success('Order placed successfully!');
-        router.push(`/orders/${order.id}`);
-      } else {
-        throw new Error('Order creation failed');
-      }
-    } catch (error: any) {
-      console.error('Checkout error:', error);
-      toast.error(error.response?.data?.error || 'Failed to place order. Please try again.');
-    } finally {
-      setLoading(false);
+      // Clear cart after successful order
+      await clearCart();
+      await refreshCart();
+      toast.success('Order placed successfully!');
+      router.push(`/orders/${orderId}`);
+    } else {
+      throw new Error('Order creation failed');
     }
-  };
+  } catch (error: any) {
+    console.error('Checkout error:', error);
+    toast.error(error.response?.data?.error || 'Failed to place order. Please try again.');
+  } finally {
+    setLoading(false);
+  }
+};
 
   if (items.length === 0) {
     return null; // Will redirect in useEffect

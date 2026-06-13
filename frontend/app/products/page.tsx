@@ -3,78 +3,53 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import ProductCard from '@/components/product/ProductCard';
-import { productsAPI } from '@/lib/api';
-import type { Product } from '@/lib/types';
+import { fetchProductsFromFakeStore } from '@/lib/fakestore';
 import toast from 'react-hot-toast';
+
+interface ProductType {
+  id: number;
+  name: string;
+  price: number;
+  description: string;
+  image: string;
+  stock: number;
+  category: string;
+  rating?: number;
+  reviews?: number;
+}
+
+// USD to ZAR conversion rate (update this as needed)
+const USD_TO_ZAR = 18.5;
 
 export default function ProductsPage() {
   const searchParams = useSearchParams();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ProductType[]>([]);
+  const [filteredProducts, setFilteredProducts] = useState<ProductType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
-  const [priceRange, setPriceRange] = useState<[number, number]>([0, 100000]);
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [priceRange, setPriceRange] = useState<[number, number]>([0, 50000]);
   const [sortBy, setSortBy] = useState<'price_asc' | 'price_desc' | 'name_asc' | 'name_desc'>('name_asc');
-  const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
-  const [maxPrice, setMaxPrice] = useState(100000);
-  const [isMounted, setIsMounted] = useState(false);
+  const [maxPrice, setMaxPrice] = useState(50000);
 
-  // Fix hydration mismatch - only render price numbers after mount
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
+  const categories = ['All', 'Electronics', 'Fashion', 'Jewelery', 'Accessories'];
 
-  // Load categories
-  useEffect(() => {
-    const loadCategories = async () => {
-      try {
-        const response = await productsAPI.getCategories();
-        const cats = Array.isArray(response.data) ? response.data : (response.data as any).categories || [];
-        setCategories([{ id: 0, name: 'All' }, ...cats]);
-      } catch (error) {
-        console.error('Error loading categories:', error);
-        // Fallback categories
-        setCategories([
-          { id: 0, name: 'All' },
-          { id: 1, name: 'Electronics' },
-          { id: 2, name: 'Appliances' },
-          { id: 3, name: 'Gadgets' },
-          { id: 4, name: 'Audio' },
-        ]);
-      }
-    };
-    loadCategories();
-  }, []);
-
-  // Load products
   useEffect(() => {
     const loadProducts = async () => {
       try {
         setLoading(true);
-        const params: any = { per_page: 100 };
-        if (selectedCategoryId && selectedCategoryId !== 0) {
-          params.category_id = selectedCategoryId;
-        }
+        const fetchedProducts = await fetchProductsFromFakeStore();
         
-        const response = await productsAPI.getAll(params);
-        let productsData = [];
+        // Convert USD to ZAR for all products
+        const productsWithZar = fetchedProducts.map(product => ({
+          ...product,
+          price: Math.round(product.price * USD_TO_ZAR)
+        }));
         
-        if (Array.isArray(response.data)) {
-          productsData = response.data;
-        } else if ((response.data as any).products) {
-          productsData = (response.data as any).products;
-        } else {
-          productsData = response.data as any;
-        }
+        setProducts(productsWithZar);
         
-        setProducts(productsData);
-        
-        // Set max price for filter
-        if (productsData.length > 0) {
-          const max = Math.max(...productsData.map((p: Product) => p.price));
-          setMaxPrice(max);
-          setPriceRange([0, max]);
-        }
+        const max = Math.max(...productsWithZar.map(p => p.price));
+        setMaxPrice(max);
+        setPriceRange([0, max]);
       } catch (error) {
         console.error('Error loading products:', error);
         toast.error('Failed to load products');
@@ -84,16 +59,24 @@ export default function ProductsPage() {
     };
     
     loadProducts();
-  }, [selectedCategoryId]);
+  }, []);
 
-  // Apply filters and sorting
+  useEffect(() => {
+    const categoryParam = searchParams.get('category');
+    if (categoryParam) {
+      setSelectedCategory(categoryParam);
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     let filtered = [...products];
 
-    // Filter by price
+    if (selectedCategory && selectedCategory !== 'All') {
+      filtered = filtered.filter(p => p.category === selectedCategory);
+    }
+
     filtered = filtered.filter(p => p.price >= priceRange[0] && p.price <= priceRange[1]);
 
-    // Sort
     switch (sortBy) {
       case 'price_asc':
         filtered.sort((a, b) => a.price - b.price);
@@ -110,11 +93,7 @@ export default function ProductsPage() {
     }
 
     setFilteredProducts(filtered);
-  }, [products, priceRange, sortBy]);
-
-  const handleCategoryChange = (categoryId: number) => {
-    setSelectedCategoryId(categoryId === 0 ? null : categoryId);
-  };
+  }, [products, selectedCategory, priceRange, sortBy]);
 
   return (
     <div className="min-h-screen bg-gray-50 py-12">
@@ -127,41 +106,30 @@ export default function ProductsPage() {
             <div className="bg-white rounded-lg shadow p-6 sticky top-20">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Filters</h2>
               
-              {/* Categories */}
               <div className="mb-6">
                 <h3 className="text-sm font-medium text-gray-700 mb-2">Category</h3>
                 <div className="space-y-2">
                   {categories.map((category) => (
-                    <label key={category.id} className="flex items-center">
+                    <label key={category} className="flex items-center">
                       <input
                         type="radio"
                         name="category"
-                        checked={selectedCategoryId === (category.id === 0 ? null : category.id)}
-                        onChange={() => handleCategoryChange(category.id)}
+                        checked={selectedCategory === category}
+                        onChange={() => setSelectedCategory(category === 'All' ? '' : category)}
                         className="h-4 w-4 text-black focus:ring-black border-gray-300"
                       />
-                      <span className="ml-2 text-sm text-gray-600">{category.name}</span>
+                      <span className="ml-2 text-sm text-gray-600">{category}</span>
                     </label>
                   ))}
                 </div>
               </div>
               
-              {/* Price Range - Fix hydration mismatch */}
               <div className="mb-6">
                 <h3 className="text-sm font-medium text-gray-700 mb-2">Price Range (ZAR)</h3>
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    {isMounted ? (
-                      <>
-                        <span className="text-sm text-gray-600">R{priceRange[0].toLocaleString()}</span>
-                        <span className="text-sm text-gray-600">R{priceRange[1].toLocaleString()}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-sm text-gray-600">R0</span>
-                        <span className="text-sm text-gray-600">R0</span>
-                      </>
-                    )}
+                    <span className="text-sm text-gray-600">R{priceRange[0].toLocaleString()}</span>
+                    <span className="text-sm text-gray-600">R{priceRange[1].toLocaleString()}</span>
                   </div>
                   <input
                     type="range"
@@ -175,7 +143,6 @@ export default function ProductsPage() {
                 </div>
               </div>
               
-              {/* Sort By */}
               <div>
                 <h3 className="text-sm font-medium text-gray-700 mb-2">Sort By</h3>
                 <select
@@ -192,14 +159,13 @@ export default function ProductsPage() {
             </div>
           </div>
           
-          {/* Products Grid */}
           <div className="mt-8 lg:mt-0 lg:col-span-3">
             <div className="mb-6 flex justify-between items-center">
               <p className="text-gray-600">{filteredProducts.length} products found</p>
-              {(selectedCategoryId || priceRange[1] < maxPrice) && (
+              {(selectedCategory || priceRange[1] < maxPrice) && (
                 <button
                   onClick={() => {
-                    setSelectedCategoryId(null);
+                    setSelectedCategory('');
                     setPriceRange([0, maxPrice]);
                   }}
                   className="text-sm text-black hover:text-gray-600"
@@ -228,15 +194,6 @@ export default function ProductsPage() {
             ) : (
               <div className="text-center py-12 bg-white rounded-lg">
                 <p className="text-gray-600">No products found matching your criteria.</p>
-                <button
-                  onClick={() => {
-                    setSelectedCategoryId(null);
-                    setPriceRange([0, maxPrice]);
-                  }}
-                  className="mt-4 text-black hover:text-gray-600 underline"
-                >
-                  Clear all filters
-                </button>
               </div>
             )}
           </div>

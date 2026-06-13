@@ -3,32 +3,43 @@
 import { useEffect, useState } from 'react';
 import ProductCard from '@/components/product/ProductCard';
 import Hero from '@/components/ui/Hero';
-import { productsAPI } from '@/lib/api';
-import type { Product } from '@/lib/types';
+import { fetchProductsFromFakeStore } from '@/lib/fakestore';
 import toast from 'react-hot-toast';
 
+interface ProductType {
+  id: number;
+  name: string;
+  price: number;
+  description: string;
+  image: string;
+  stock: number;
+  category: string;
+  rating?: number;
+  reviews?: number;
+}
+
+// USD to ZAR conversion rate
+const USD_TO_ZAR = 18.5;
+
 export default function Home() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [products, setProducts] = useState<ProductType[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   
   useEffect(() => {
     const loadProducts = async () => {
       try {
         setLoading(true);
-        setError(null);
+        const fetchedProducts = await fetchProductsFromFakeStore();
         
-        // Fetch from REAL backend API
-        const response = await productsAPI.getAll({ per_page: 6 });
-        // Handle both response formats (PaginatedProducts or array)
-        const productsData = Array.isArray(response.data) 
-          ? response.data 
-          : (response.data as any).products || [];
-        setProducts(productsData);
+        // Convert USD to ZAR
+        const productsWithZar = fetchedProducts.map(product => ({
+          ...product,
+          price: Math.round(product.price * USD_TO_ZAR)
+        }));
         
+        setProducts(productsWithZar);
       } catch (error) {
         console.error('Error loading products:', error);
-        setError('Failed to load products. Please refresh the page.');
         toast.error('Failed to load products');
       } finally {
         setLoading(false);
@@ -38,14 +49,12 @@ export default function Home() {
     loadProducts();
   }, []);
   
-  // Get unique categories from products for dynamic display
-  const categories = ['Electronics', 'Appliances', 'Gadgets', 'Audio'];
+  const categories = ['Electronics', 'Fashion', 'Jewelery', 'Accessories'];
   
   return (
     <main>
       <Hero />
       
-      {/* Categories Section */}
       <section className="max-w-7xl mx-auto px-4 py-12">
         <h2 className="text-3xl font-bold mb-8">Shop by Category</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -61,18 +70,11 @@ export default function Home() {
         </div>
       </section>
       
-      {/* Products Grid */}
       <section className="max-w-7xl mx-auto px-4 py-12">
         <div className="flex justify-between items-center mb-8">
           <h2 className="text-3xl font-bold">Featured Products</h2>
           <p className="text-gray-600">{products.length} products available</p>
         </div>
-        
-        {error && (
-          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded mb-4">
-            {error}
-          </div>
-        )}
         
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -84,15 +86,11 @@ export default function Home() {
               </div>
             ))}
           </div>
-        ) : products.length > 0 ? (
+        ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {products.slice(0, 6).map((product) => (
-              <ProductCard key={product.id} product={product as any} />
+              <ProductCard key={product.id} product={product} />
             ))}
-          </div>
-        ) : (
-          <div className="text-center py-12 bg-white rounded-lg">
-            <p className="text-gray-600">No products found. Check back soon!</p>
           </div>
         )}
       </section>

@@ -114,7 +114,7 @@ export const cartAPI = {
 // ── Orders API ────────────────────────────────────────────────────────────────
 export const ordersAPI = {
   create: (shippingAddress?: string, notes?: string) =>
-    api.post<Order>('/orders', { shipping_address: shippingAddress, notes }),
+    api.post<{ message: string; order: Order }>('/orders', { shipping_address: shippingAddress, notes }),
 
   getAll: (page?: number) =>
     api.get('/orders', { params: { page } }),

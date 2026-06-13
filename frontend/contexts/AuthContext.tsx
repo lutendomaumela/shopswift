@@ -1,8 +1,10 @@
 'use client'
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import { authAPI, tokenStorage } from '@/lib/api'
 import type { User } from '@/lib/types'
+import toast from 'react-hot-toast'
 
 // ── Shape of what useAuth() returns ──────────────────────────────────────────
 interface AuthContextType {
@@ -11,7 +13,7 @@ interface AuthContextType {
   isAuthenticated: boolean
   login: (email: string, password: string) => Promise<void>
   register: (fullName: string, email: string, password: string, phoneNumber?: string, address?: string) => Promise<void>
-  logout: () => void
+  logout: () => Promise<void>
   updateProfile: (data: {
     full_name?: string
     phone_number?: string
@@ -25,14 +27,15 @@ const AuthContext = createContext<AuthContextType | null>(null)
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser]       = useState<User | null>(null)
+  const router = useRouter()
+  const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
   // On app load: check if a token already exists from a previous session.
   // If yes, verify it is still valid by calling GET /api/auth/me.
   // If the token is expired, the 401 interceptor in api.ts clears storage automatically.
   useEffect(() => {
-    const storedUser  = tokenStorage.getUser()
+    const storedUser = tokenStorage.getUser()
     const storedToken = tokenStorage.getAccessToken()
 
     if (storedToken && storedUser) {
@@ -60,12 +63,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ── login ─────────────────────────────────────────────────────────────────
   const login = useCallback(async (email: string, password: string) => {
-    const res = await authAPI.login(email, password)
-    const { access_token, user: loggedInUser } = res.data
+    try {
+      const res = await authAPI.login(email, password)
+      const { access_token, user: loggedInUser } = res.data
 
-    tokenStorage.setAccessToken(access_token)
-    tokenStorage.setUser(loggedInUser)
-    setUser(loggedInUser)
+      tokenStorage.setAccessToken(access_token)
+      tokenStorage.setUser(loggedInUser)
+      setUser(loggedInUser)
+      toast.success(`Welcome back, ${loggedInUser.full_name}!`)
+    } catch (error: any) {
+      const message = error.response?.data?.error || 'Login failed'
+      toast.error(message)
+      throw error
+    }
   }, [])
 
   // ── register ──────────────────────────────────────────────────────────────
@@ -76,22 +86,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     phoneNumber?: string,
     address?: string
   ) => {
-    const res = await authAPI.register(fullName, email, password, phoneNumber, address)
-    const { access_token, user: newUser } = res.data
+    try {
+      const res = await authAPI.register(fullName, email, password, phoneNumber, address)
+      const { access_token, user: newUser } = res.data
 
-    tokenStorage.setAccessToken(access_token)
-    tokenStorage.setUser(newUser)
-    setUser(newUser)
+      tokenStorage.setAccessToken(access_token)
+      tokenStorage.setUser(newUser)
+      setUser(newUser)
+      toast.success('Account created successfully! Welcome to ShopSwift!')
+    } catch (error: any) {
+      const message = error.response?.data?.error || 'Registration failed'
+      toast.error(message)
+      throw error
+    }
   }, [])
 
   // ── logout ────────────────────────────────────────────────────────────────
-  const logout = useCallback(() => {
-    tokenStorage.clear()
-    setUser(null)
-    if (typeof window !== 'undefined') {
-      window.location.href = '/'
+  const logout = useCallback(async () => {
+    try {
+      // Optional: Call backend logout endpoint if you have one
+      // await authAPI.logout()
+      
+      // Clear storage
+      tokenStorage.clear()
+      setUser(null)
+      
+      // Show success message
+      toast.success('Logged out successfully')
+      
+      // Redirect to homepage
+      router.push('/')
+    } catch (error) {
+      console.error('Logout error:', error)
+      // Still clear local storage even if API call fails
+      tokenStorage.clear()
+      setUser(null)
+      router.push('/')
     }
-  }, [])
+  }, [router])
 
   // ── updateProfile ─────────────────────────────────────────────────────────
   const updateProfile = useCallback(async (data: {
@@ -101,22 +133,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     current_password?: string
     new_password?: string
   }) => {
-    const res = await authAPI.updateProfile(data)
-    const updated = res.data?.user ?? res.data
-    tokenStorage.setUser(updated)
-    setUser(updated)
+    try {
+      const res = await authAPI.updateProfile(data)
+      const updated = res.data?.user ?? res.data
+      tokenStorage.setUser(updated)
+      setUser(updated)
+      toast.success('Profile updated successfully')
+    } catch (error: any) {
+      const message = error.response?.data?.error || 'Failed to update profile'
+      toast.error(message)
+      throw error
+    }
   }, [])
 
+  // Memoize the context value to prevent unnecessary re-renders
+  const value = useMemo(() => ({
+    user,
+    loading,
+    isAuthenticated: !!user,
+    login,
+    register,
+    logout,
+    updateProfile,
+  }), [user, loading, login, register, logout, updateProfile])
+
   return (
-    <AuthContext.Provider value={{
-      user,
-      loading,
-      isAuthenticated: !!user,
-      login,
-      register,
-      logout,
-      updateProfile,
-    }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )

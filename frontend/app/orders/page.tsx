@@ -3,69 +3,68 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { ordersAPI, tokenStorage } from '@/lib/api';
+import type { Order } from '@/lib/types';
 import toast from 'react-hot-toast';
-
-interface Order {
-  id: string;
-  date: string;
-  status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
-  total_amount: number;
-  shipping_cost: number;
-  items: Array<{
-    id: number;
-    name: string;
-    quantity: number;
-    price: number;
-    image: string;
-  }>;
-  shipping_address: {
-    full_name: string;
-    address_line1: string;
-    address_line2?: string;
-    city: string;
-    postal_code: string;
-    country: string;
-  };
-}
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function OrdersPage() {
   const router = useRouter();
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
 
+  // Redirect if not authenticated
   useEffect(() => {
-    // Check if user is authenticated
-    const token = localStorage.getItem('token');
-    if (!token) {
+    if (!authLoading && !isAuthenticated) {
       toast.error('Please login to view your orders');
       router.push('/login');
       return;
     }
+  }, [isAuthenticated, authLoading, router]);
 
-    const fetchOrders = async () => {
-      try {
-        const response = await fetch('http://localhost:5000/api/orders', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch orders');
-
-        const data = await response.json();
-        setOrders(data);
-      } catch (error) {
-        console.error('Error fetching orders:', error);
-        // Mock orders for demo
-        setOrders(mockOrders);
-      } finally {
-        setLoading(false);
+  const fetchOrders = async () => {
+    try {
+      setLoading(true);
+      const response = await ordersAPI.getAll();
+      let ordersData: Order[] = [];
+      
+      if (Array.isArray(response.data)) {
+        ordersData = response.data;
+      } else if ((response.data as any).orders) {
+        ordersData = (response.data as any).orders;
+      } else {
+        ordersData = response.data as any;
       }
-    };
+      
+      setOrders(ordersData);
+    } catch (error) {
+      console.error('Error fetching orders:', error);
+      toast.error('Failed to load orders');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    fetchOrders();
-  }, [router]);
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchOrders();
+    }
+  }, [isAuthenticated]);
+
+  const handleCancelOrder = async (orderId: number) => {
+    if (!confirm('Are you sure you want to cancel this order?')) return;
+    
+    try {
+      await ordersAPI.cancel(orderId);
+      toast.success('Order cancelled successfully');
+      fetchOrders();
+    } catch (error) {
+      console.error('Error cancelling order:', error);
+      toast.error('Failed to cancel order');
+    }
+  };
 
   const getStatusColor = (status: Order['status']) => {
     const colors = {
@@ -75,7 +74,7 @@ export default function OrdersPage() {
       delivered: 'bg-green-100 text-green-800',
       cancelled: 'bg-red-100 text-red-800',
     };
-    return colors[status];
+    return colors[status] || 'bg-gray-100 text-gray-800';
   };
 
   const getStatusText = (status: Order['status']) => {
@@ -86,10 +85,10 @@ export default function OrdersPage() {
       delivered: 'Delivered',
       cancelled: 'Cancelled',
     };
-    return texts[status];
+    return texts[status] || status;
   };
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
       <div className="min-h-screen bg-gray-50 py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -104,6 +103,10 @@ export default function OrdersPage() {
         </div>
       </div>
     );
+  }
+
+  if (!isAuthenticated) {
+    return null; // Will redirect in useEffect
   }
 
   if (orders.length === 0) {
@@ -137,9 +140,9 @@ export default function OrdersPage() {
               <div className="p-6 border-b bg-gray-50">
                 <div className="flex flex-wrap justify-between items-center gap-4">
                   <div>
-                    <p className="text-sm text-gray-600">Order #{order.id}</p>
+                    <p className="text-sm text-gray-600">Order #{order.order_number || order.id}</p>
                     <p className="text-sm text-gray-600">
-                      Placed on {new Date(order.date).toLocaleDateString()}
+                      Placed on {new Date(order.created_at).toLocaleDateString()}
                     </p>
                   </div>
                   <div className="flex items-center gap-4">
@@ -147,10 +150,10 @@ export default function OrdersPage() {
                       {getStatusText(order.status)}
                     </span>
                     <button
-                      onClick={() => setSelectedOrder(selectedOrder?.id === order.id ? null : order)}
+                      onClick={() => setSelectedOrderId(selectedOrderId === order.id ? null : order.id)}
                       className="text-sm text-black hover:text-gray-600 underline"
                     >
-                      {selectedOrder?.id === order.id ? 'Hide Details' : 'View Details'}
+                      {selectedOrderId === order.id ? 'Hide Details' : 'View Details'}
                     </button>
                   </div>
                 </div>
@@ -161,35 +164,39 @@ export default function OrdersPage() {
                 <div className="flex justify-between items-center">
                   <div>
                     <p className="text-sm text-gray-600">
-                      {order.items.length} item{order.items.length !== 1 ? 's' : ''}
+                      {order.items?.length || 0} item{order.items?.length !== 1 ? 's' : ''}
                     </p>
                     <p className="text-2xl font-bold text-black mt-1">
                       R{order.total_amount.toLocaleString()}
                     </p>
                   </div>
                   {order.status === 'pending' && (
-                    <button className="px-4 py-2 border border-black rounded-md text-sm font-medium text-black hover:bg-gray-50">
-                      Pay Now
+                    <button 
+                      onClick={() => handleCancelOrder(order.id)}
+                      className="px-4 py-2 border border-red-600 rounded-md text-sm font-medium text-red-600 hover:bg-red-50"
+                    >
+                      Cancel Order
                     </button>
                   )}
                 </div>
               </div>
               
               {/* Order Details (Expandable) */}
-              {selectedOrder?.id === order.id && (
+              {selectedOrderId === order.id && order.items && (
                 <div className="border-t p-6 bg-gray-50">
                   <h3 className="font-semibold text-gray-900 mb-4">Order Details</h3>
                   
                   {/* Items */}
                   <div className="space-y-4 mb-6">
-                    {order.items.map((item) => (
-                      <div key={item.id} className="flex items-center gap-4">
-                        <img src={item.image} alt={item.name} className="w-16 h-16 object-cover rounded" />
+                    {order.items.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-4">
                         <div className="flex-1">
-                          <p className="font-medium text-gray-900">{item.name}</p>
+                          <p className="font-medium text-gray-900">{item.product_name}</p>
                           <p className="text-sm text-gray-600">Quantity: {item.quantity}</p>
                         </div>
-                        <p className="font-medium text-gray-900">R{(item.price * item.quantity).toLocaleString()}</p>
+                        <p className="font-medium text-gray-900">
+                          R{(item.price_at_time * item.quantity).toLocaleString()}
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -198,12 +205,8 @@ export default function OrdersPage() {
                   {order.shipping_address && (
                     <div className="mb-6">
                       <h4 className="font-medium text-gray-900 mb-2">Shipping Address</h4>
-                      <p className="text-sm text-gray-600">
-                        {order.shipping_address.full_name}<br />
-                        {order.shipping_address.address_line1}<br />
-                        {order.shipping_address.address_line2 && <>{order.shipping_address.address_line2}<br /></>}
-                        {order.shipping_address.city}, {order.shipping_address.postal_code}<br />
-                        {order.shipping_address.country}
+                      <p className="text-sm text-gray-600 whitespace-pre-line">
+                        {order.shipping_address}
                       </p>
                     </div>
                   )}
@@ -213,37 +216,17 @@ export default function OrdersPage() {
                     <div className="space-y-1 text-sm">
                       <div className="flex justify-between">
                         <span className="text-gray-600">Subtotal</span>
-                        <span>R{(order.total_amount - order.shipping_cost).toLocaleString()}</span>
+                        <span>R{(order.total_amount - 99).toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-600">Shipping</span>
-                        <span>R{order.shipping_cost.toLocaleString()}</span>
+                        <span>R99.00</span>
                       </div>
                       <div className="flex justify-between font-semibold pt-2 border-t">
                         <span>Total</span>
                         <span className="text-lg">R{order.total_amount.toLocaleString()}</span>
                       </div>
                     </div>
-                  </div>
-                  
-                  {/* Actions */}
-                  <div className="mt-6 flex gap-4">
-                    {order.status === 'delivered' && (
-                      <button className="px-4 py-2 border border-black rounded-md text-sm font-medium text-black hover:bg-gray-50">
-                        Write a Review
-                      </button>
-                    )}
-                    {order.status === 'pending' && (
-                      <button className="px-4 py-2 border border-red-600 rounded-md text-sm font-medium text-red-600 hover:bg-red-50">
-                        Cancel Order
-                      </button>
-                    )}
-                    <Link
-                      href={`/orders/${order.id}/track`}
-                      className="px-4 py-2 text-sm text-black hover:text-gray-600 underline"
-                    >
-                      Track Order →
-                    </Link>
                   </div>
                 </div>
               )}
@@ -254,60 +237,3 @@ export default function OrdersPage() {
     </div>
   );
 }
-
-// Mock orders for demo
-const mockOrders: Order[] = [
-  {
-    id: 'ORD-001',
-    date: '2026-05-15',
-    status: 'delivered',
-    total_amount: 24998,
-    shipping_cost: 99,
-    items: [
-      {
-        id: 1,
-        name: 'Samsung Galaxy S24 Ultra',
-        quantity: 1,
-        price: 21999,
-        image: 'https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?w=200',
-      },
-      {
-        id: 3,
-        name: 'Sony WH-1000XM5',
-        quantity: 1,
-        price: 7299,
-        image: 'https://images.unsplash.com/photo-1618366712010-f4ae9c647dcb?w=200',
-      },
-    ],
-    shipping_address: {
-      full_name: 'John Doe',
-      address_line1: '123 Main Street',
-      city: 'Cape Town',
-      postal_code: '8001',
-      country: 'South Africa',
-    },
-  },
-  {
-    id: 'ORD-002',
-    date: '2026-05-20',
-    status: 'shipped',
-    total_amount: 38500,
-    shipping_cost: 0,
-    items: [
-      {
-        id: 2,
-        name: 'MacBook Pro M3 14"',
-        quantity: 1,
-        price: 38500,
-        image: 'https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=200',
-      },
-    ],
-    shipping_address: {
-      full_name: 'John Doe',
-      address_line1: '123 Main Street',
-      city: 'Cape Town',
-      postal_code: '8001',
-      country: 'South Africa',
-    },
-  },
-];
