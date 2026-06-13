@@ -36,7 +36,7 @@ export const tokenStorage = {
 // In development:  set NEXT_PUBLIC_API_URL=http://localhost:5000/api in .env.local
 // In production:   set NEXT_PUBLIC_API_URL=http://16.28.27.6/api in .env.local
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api',
+  baseURL: process.env.NEXT_PUBLIC_API_URL || '/api',
   timeout: 10000,
   headers: { 'Content-Type': 'application/json' },
 })

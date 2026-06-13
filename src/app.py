@@ -65,20 +65,15 @@ def create_app():
 
     # ========== CORS CONFIGURATION ==========
     # Allow all origins for development (restrict in production)
-    CORS(app, 
-         origins=[
-             'http://localhost:3000',
-             'http://127.0.0.1:3000',
-             'http://13.245.255.204',
-             'http://13.245.255.204:80',
-             'http://localhost',
-             'http://0.0.0.0:3000',
-             '*'
-         ],
-         supports_credentials=True,
-         allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
-         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-         expose_headers=['Content-Type', 'Authorization']
+    CORS(app,
+     origins=[
+         'http://localhost:3000',
+         'http://127.0.0.1:3000',
+         'http://13.245.255.204',
+     ],
+     supports_credentials=True,
+     allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
     )
     
    
